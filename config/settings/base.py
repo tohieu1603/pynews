@@ -112,4 +112,7 @@ JWT_REFRESH_TTL_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
+# Allow cookies/credentials in cross-origin requests from allowed origins
+CORS_ALLOW_CREDENTIALS = True

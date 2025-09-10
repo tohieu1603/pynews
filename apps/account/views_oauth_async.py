@@ -12,7 +12,7 @@ User = get_user_model()
 
 
 async def oauth_callback_async(request):
-    """Google OAuth redirect handler (ultra-fast with async/await)"""
+    """Google OAuth redirect handler"""
     
     code = request.GET.get("code")
     if not code:
@@ -23,7 +23,7 @@ async def oauth_callback_async(request):
         timeout = aiohttp.ClientTimeout(total=3, connect=1)
         
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            # Exchange code for access token
+    
             token_data = {
                 "client_id": settings.GOOGLE_CLIENT_ID,
                 "client_secret": settings.GOOGLE_CLIENT_SECRET,
@@ -89,22 +89,39 @@ async def oauth_callback_async(request):
             settings.JWT_SECRET,
             algorithm="HS256"
         )
-        
-        # Redirect to frontend with tokens in URL fragment
+
         frontend_base = (
             request.GET.get("redirect")
             or request.GET.get("next")
             or getattr(settings, "FRONTEND_URL", "http://localhost:3000")
         )
-        fragment = urlencode({
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
-            "expires_in": 86400,
-            "email": user.email or "",
-        })
-        redirect_url = f"{frontend_base.rstrip('/')}/#{fragment}"
-        return HttpResponseRedirect(redirect_url)
+
+        response = HttpResponseRedirect(frontend_base)
+
+        access_max_age = 24 * 60 * 60 
+        refresh_max_age = 7 * 24 * 60 * 60 
+        secure_flag = not getattr(settings, "DEBUG", True)
+
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            max_age=access_max_age,
+            httponly=True,
+            secure=secure_flag,
+            samesite="Lax",
+            path="/",
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            max_age=refresh_max_age,
+            httponly=True,
+            secure=secure_flag,
+            samesite="Lax",
+            path="/",
+        )
+
+        return response
         
     except asyncio.TimeoutError:
         return JsonResponse({"error": "Request timeout - try again"}, status=408)

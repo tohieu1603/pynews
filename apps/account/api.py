@@ -4,10 +4,10 @@ from pydantic import BaseModel
 from django.contrib.auth import authenticate, get_user_model
 from django.conf import settings
 from urllib.parse import urlencode
-import datetime
 import requests
-from typing import Optional, List
+from typing import List
 from .models import SocialAccount
+from core.jwt_auth import cookie_or_bearer_jwt_auth
 import jwt
 
 User = get_user_model()
@@ -168,10 +168,8 @@ def google_login(request, payload: GoogleLoginRequest):
             }
             return Response({"error": "Failed to get access token from Google", **debug}, status=400)
         
-        # Get user info from Google
         google_user_info = get_user_info_from_google(token_json['access_token'])
         
-        # Create or get user
         user = create_or_get_user_from_google(google_user_info)
         
         # Create JWT tokens
@@ -206,14 +204,12 @@ def _client_ids() -> List[str]:
 @router.post("/google/login-id-token", response=TokenResponse)
 def google_login_id_token(request, payload: GoogleIdTokenRequest):
     """Login with Google ID token (verify locally, no token exchange).
-
-    Useful for frontends using Google Identity Services to obtain an ID token.
     """
     try:
         try:
             from google.oauth2 import id_token as g_id_token
             from google.auth.transport import requests as g_requests
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc: 
             return Response({
                 "error": "Missing dependency 'google-auth'",
                 "hint": "pip install google-auth"
@@ -238,7 +234,6 @@ def google_login_id_token(request, payload: GoogleIdTokenRequest):
             msg = str(last_exc) if last_exc else "Invalid Google ID token"
             return Response({"error": msg}, status=400)
 
-        # Normalize fields similar to userinfo endpoint
         google_user_info = {
             'sub': idinfo.get('sub'),
             'email': idinfo.get('email'),
@@ -266,7 +261,7 @@ def google_login_id_token(request, payload: GoogleIdTokenRequest):
 
 @router.post("/login", response=TokenResponse)
 def login(request, payload: LoginRequest):
-    """Traditional email/password login"""
+
     try:
         user = authenticate(username=payload.email, password=payload.password)
         
@@ -303,7 +298,7 @@ def login(request, payload: LoginRequest):
             status=400
         )
 
-@router.get("/profile")
+@router.get("/profile", auth=cookie_or_bearer_jwt_auth)
 def get_profile(request):
     """Get current user profile (requires authentication)"""
     try:

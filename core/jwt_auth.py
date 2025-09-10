@@ -10,10 +10,36 @@ class JWTAuth(HttpBearer):
     def authenticate(self, request, token):
         try:
             payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-            user = User.objects.get(id=payload["user_id"])
+            user_id = payload.get("user_id") or payload.get("sub")
+            if not user_id:
+                return None
+            user = User.objects.get(id=user_id)
             return user
         except Exception:
             return None
+
+
+def cookie_or_bearer_jwt_auth(request):
+    """Authenticate via Authorization Bearer header or HttpOnly access_token cookie."""
+    auth_header = request.headers.get("Authorization") or request.META.get("HTTP_AUTHORIZATION")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    else:
+        token = request.COOKIES.get("access_token")
+
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        user_id = payload.get("user_id") or payload.get("sub")
+        if not user_id:
+            return None
+        user = User.objects.get(id=user_id)
+        return user
+    except Exception:
+        return None
 import datetime as dt
 from typing import Any, Dict, Tuple
 
