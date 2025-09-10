@@ -42,3 +42,20 @@ def get_symbol(request, symbol: str):
     """
     service = SymbolService()
     return service.get_symbol_payload(symbol.upper())
+@router.post("/shareholders", response=dict)
+def import_shareholders(request):
+    service = SymbolService()
+    count = service.import_all_shareholders()
+    return {"imported_shareholders_count": count}
+
+@router.post("/events", response=dict)
+def import_events(request):
+    service = SymbolService()
+    count = service.import_all_events()
+    return {"imported_events_count": count}
+
+@router.post("/officers", response=dict)
+def import_officers(request):
+    service = SymbolService()
+    count = service.import_all_officers()
+    return {"imported_officers_count": count}

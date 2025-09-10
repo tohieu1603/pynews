@@ -3,10 +3,6 @@ from django.db.models import QuerySet, Prefetch
 from apps.stock.models import Industry, ShareHolder, Symbol, Company, News, Officers, Events
 
 
-# =============================
-# Upsert helpers
-# =============================
-
 def get_or_create_industry(name: Optional[str]) -> Industry:
     clean_name = (name or "").strip() or "Unknown Industry"
     obj, _ = Industry.objects.get_or_create(name=clean_name)
@@ -88,9 +84,7 @@ def upsert_events(company: Company, rows: Iterable[Dict]) -> None:
             company=company,
             defaults={
                 "source_url": r.get("source_url"),
-                # Nếu model đã fix auto_now_add, có thể set thêm public_date / issue_date ở đây
-                # "public_date": r.get("public_date"),
-                # "issue_date": r.get("issue_date"),
+               
             }
         )
 
@@ -107,10 +101,6 @@ def upsert_officers(company: Company, rows: Iterable[Dict]) -> None:
             }
         )
 
-
-# =============================
-# QuerySet helpers
-# =============================
 
 def qs_companies_with_related() -> QuerySet[Company]:
     return (
@@ -148,10 +138,8 @@ def qs_industries_with_symbols() -> QuerySet[Industry]:
             ),
         )
     )
-
-# =============================
-# Symbol ↔ Industry (N-N)
-# =============================
+def qs_all_symbols() -> QuerySet[Symbol]:
+    return Symbol.objects.all().only("id", "name")
 
 def upsert_symbol_industry(symbol: Symbol, industry: Industry) -> None:
     """
@@ -159,10 +147,6 @@ def upsert_symbol_industry(symbol: Symbol, industry: Industry) -> None:
     """
     if not symbol.industries.filter(id=industry.id).exists():
         symbol.industries.add(industry)
-
-# =============================
-# Subsidiary relation
-# =============================
 
 def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, own_percent: Optional[float]) -> None:
     """
@@ -172,10 +156,6 @@ def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, ow
     if own_percent is not None:
         sub_company.sub_own_percent = own_percent
     sub_company.save()
-
-# =============================
-# Safe mappers
-# =============================
 
 def safe_int(val, default=0):
     try:

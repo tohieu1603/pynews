@@ -1,19 +1,13 @@
 from django.db import models
 
-# =============================
-# Industry
-# =============================
 class Industry(models.Model):
-    id = models.IntegerField(primary_key=True)  # icb_code
+    id = models.IntegerField(primary_key=True)  
     name = models.CharField(max_length=255, unique=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.name
 
-# =============================
-# Company
-# =============================
 class Company(models.Model):
     company_name = models.CharField(max_length=255, unique=True)
     company_profile = models.TextField(null=True, blank=True)
@@ -41,9 +35,6 @@ class Company(models.Model):
     def __str__(self):
         return self.company_name
 
-# =============================
-# Symbol
-# =============================
 class Symbol(models.Model):
     name = models.CharField(max_length=200, unique=True)
     exchange = models.CharField(max_length=50)
@@ -60,9 +51,6 @@ class Symbol(models.Model):
     def __str__(self):
         return f"{self.name} ({self.exchange})"
 
-# =============================
-# Shareholder
-# =============================
 class ShareHolder(models.Model):
     share_holder = models.CharField(max_length=255)
     quantity = models.BigIntegerField(default=0)
@@ -79,10 +67,6 @@ class ShareHolder(models.Model):
 
     def __str__(self):
         return f"{self.share_holder} - {self.share_own_percent}%"
-
-# =============================
-# News
-# =============================
 class News(models.Model):
     title = models.CharField(max_length=255)
     news_image_url = models.CharField(max_length=255, blank=True, null=True)
@@ -98,9 +82,6 @@ class News(models.Model):
     def __str__(self):
         return self.title
 
-# =============================
-# Events
-# =============================
 class Events(models.Model):
     event_title = models.CharField(max_length=255)
     public_date = models.DateTimeField(null=True, blank=True)
@@ -115,9 +96,6 @@ class Events(models.Model):
     def __str__(self):
         return self.event_title
 
-# =============================
-# Officers
-# =============================
 class Officers(models.Model):
     officer_name = models.CharField(max_length=255)
     officer_position = models.CharField(max_length=255)
