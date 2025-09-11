@@ -1,6 +1,6 @@
 from typing import Dict, Iterable, Optional
 from django.db.models import QuerySet, Prefetch
-from apps.stock.models import Industry, ShareHolder, Symbol, Company, News, Officers, Events
+from apps.stock.models import Industry, ShareHolder, Symbol, Company, News, Officers, Events, SubCompany
 
 
 def get_or_create_industry(name: Optional[str]) -> Industry:
@@ -15,17 +15,19 @@ def upsert_industry(defaults: Dict) -> Industry:
     """
     ind_id = defaults.get("id") if isinstance(defaults, dict) else None
     name = defaults.get("name") if isinstance(defaults, dict) else None
+    clean_name = (name or "").strip() or "Unknown Industry"
+
+    existing_by_name = Industry.objects.filter(name=clean_name).first()
+    if existing_by_name:
+        return existing_by_name
 
     if ind_id is not None:
-        # Update existing or create with specific primary key
         obj, _ = Industry.objects.update_or_create(
-            id=int(ind_id),
-            defaults={"name": (name or "Unknown Industry").strip()},
+            id=int(ind_id), defaults={"name": clean_name, "level": defaults.get("level")}
         )
         return obj
 
     # Fallback by name
-    clean_name = (name or "").strip() or "Unknown Industry"
     obj, _ = Industry.objects.get_or_create(name=clean_name)
     return obj
 def upsert_company(company_name: Optional[str], defaults: Dict) -> Company:
@@ -87,6 +89,17 @@ def upsert_events(company: Company, rows: Iterable[Dict]) -> None:
                
             }
         )
+def upsert_sub_company(rows: Optional[Iterable[Dict]], parent_company: Company) -> None:
+    if not rows:  # None hoặc rỗng
+        return
+    for r in rows:
+        SubCompany.objects.update_or_create(
+            company_name=(r.get("company_name") or "").strip(),
+            parent=parent_company,
+            defaults={
+                "sub_own_percent": r.get("sub_own_percent"),
+            }
+        )
 
 
 def upsert_officers(company: Company, rows: Iterable[Dict]) -> None:
@@ -110,30 +123,30 @@ def qs_companies_with_related() -> QuerySet[Company]:
     )
 
 
-def qs_symbol_by_name(symbol: str) -> QuerySet[Symbol]:
-    clean_symbol = (symbol or "").strip().upper()
+def qs_symbol_by_name(symbol: str):
     return (
-        Symbol.objects
+        Symbol.objects.filter(name=symbol)
         .select_related("company")
         .prefetch_related(
             "industries",
-            "company__industries",
-            "company__shareholders",
-            "company__news",
-            "company__events",
-            "company__officers",
+            Prefetch("company__shareholders"),
+            Prefetch("company__events"),
+            Prefetch("company__officers"),
         )
-        .filter(name__iexact=clean_symbol)
     )
-
+def qs_symbols():
+    qs = (
+        Symbol.objects
+        .select_related("company")
+        .filter
+    )
 
 def qs_industries_with_symbols() -> QuerySet[Industry]:
     return (
         Industry.objects
         .prefetch_related(
-            "companies",
             Prefetch(
-                "companies__symbols",
+                "symbols",
                 queryset=Symbol.objects.select_related("company"),
             ),
         )
@@ -147,6 +160,17 @@ def upsert_symbol_industry(symbol: Symbol, industry: Industry) -> None:
     """
     if not symbol.industries.filter(id=industry.id).exists():
         symbol.industries.add(industry)
+
+def qs_symbols_with_industries() -> QuerySet[Symbol]:
+    return (
+        Symbol.objects
+        .select_related("company")
+        .prefetch_related("industries")
+        .only(
+            "id", "name", "exchange", "updated_at",
+            "company__id", "company__company_name", "company__updated_at"
+        )
+    )
 
 def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, own_percent: Optional[float]) -> None:
     """

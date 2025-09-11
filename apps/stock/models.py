@@ -3,6 +3,7 @@ from django.db import models
 class Industry(models.Model):
     id = models.IntegerField(primary_key=True)  
     name = models.CharField(max_length=255, unique=True)
+    level = models.IntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -11,14 +12,15 @@ class Industry(models.Model):
 class Company(models.Model):
     company_name = models.CharField(max_length=255, unique=True)
     company_profile = models.TextField(null=True, blank=True)
-    parent = models.ForeignKey(
-        'self',
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='subsidiaries'
-    )
-    sub_own_percent = models.FloatField(null=True, blank=True)
+   # sub_own_percent = models.FloatField(null=True, blank=True)
+    # parent = models.ForeignKey(
+    #     'self',
+    #     on_delete=models.CASCADE,
+    #     null=True,
+    #     blank=True,
+    #     related_name='subsidiaries'
+    # )
+   # sub_own_percent = models.FloatField(null=True, blank=True)
     history = models.TextField(null=True, blank=True)
     issue_share = models.BigIntegerField(null=True, blank=True)
     financial_ratio_issue_share = models.BigIntegerField(null=True, blank=True)
@@ -30,6 +32,9 @@ class Company(models.Model):
     stock_rating = models.FloatField(null=True, blank=True)
     website = models.CharField(max_length=255, null=True, blank=True)
     industries = models.ManyToManyField('Industry', related_name='companies', blank=True)
+    delta_in_week = models.FloatField(null=True, blank=True)
+    delta_in_month = models.FloatField(null=True, blank=True)
+    delta_in_year = models.FloatField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -110,3 +115,7 @@ class Officers(models.Model):
 
     def __str__(self):
         return f"{self.officer_name} - {self.officer_position}"
+class SubCompany(models.Model):
+    parent = models.ForeignKey("Company", on_delete=models.CASCADE, related_name="subsidiaries")
+    company_name = models.CharField(max_length=200)
+    sub_own_percent = models.FloatField(blank=True)

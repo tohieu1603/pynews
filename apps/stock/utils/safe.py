@@ -34,6 +34,24 @@ def safe_date_passthrough(value: Any):
     try:
         if value is None or _is_nan(value):
             return None
+        
+        # Nếu là string, thử convert thành date
+        if isinstance(value, str):
+            # Thử parse date format YYYY-MM-DD
+            try:
+                return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+            except ValueError:
+                # Nếu không parse được, trả về None
+                return None
+                
+        # Nếu đã là date object, trả về nguyên vẹn
+        if isinstance(value, date):
+            return value
+            
+        # Nếu là datetime, convert thành date
+        if isinstance(value, datetime):
+            return value.date()
+            
         return value
     except Exception:
         return None

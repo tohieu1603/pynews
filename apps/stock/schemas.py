@@ -63,12 +63,20 @@ class CompanyOut(Schema):
     officers: List[OfficersOut] = []
 
 
+# ---- Industry (ref) ----
+class IndustryRefOut(Schema):
+    id: int
+    name: str
+    updated_at: Optional[datetime] = None
+
+
 # ---- Symbol ----
 class SymbolOut(Schema):
     id: int
     name: str
     exchange: Optional[str] = None
     updated_at: Optional[datetime] = None
+    industries: List[IndustryRefOut] = []
     company: Optional[CompanyOut] = None
 
 

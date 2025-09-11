@@ -1,9 +1,11 @@
 import time
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-import pandas as pd
+from vnstock import Company as VNCompany
+from vnstock import Listing
 
 from apps.stock.clients.vnstock_client import VNStockClient
 from apps.stock.models import Symbol
@@ -17,7 +19,6 @@ from apps.stock.utils.safe import (
     to_datetime,
     to_epoch_seconds,
 )
-from vnstock import Company as VNCompany
 
 
 class SymbolService:
@@ -74,6 +75,19 @@ class SymbolService:
             )
         return rows
 
+    def _map_sub_company(self, df) -> List[Dict]:
+        if df is None or df.empty:
+            return []
+        rows = []
+        for _, r in df.iterrows():
+            rows.append(
+                {
+                    "company_name": safe_str(r.get("sub_company_name", "No Name")),
+                    "sub_own_percent": safe_decimal(r.get("sub_own_percent"), None),
+                }
+            )
+        return rows
+
     def _map_officers(self, df) -> List[Dict]:
         if df is None or df.empty:
             return []
@@ -103,7 +117,8 @@ class SymbolService:
                 retries += 1
                 wait = getattr(self.vn_client, "wait_seconds", 60)
                 print(
-                    f"Rate limit when fetching shareholders for {symbol_name}. Retry {retries}/{self.vn_client.max_retries} after {wait}s"
+                    f"Rate limit when fetching shareholders for {symbol_name}. "
+                    f"Retry {retries}/{self.vn_client.max_retries} after {wait}s"
                 )
                 time.sleep(wait)
             except Exception as e:
@@ -139,7 +154,8 @@ class SymbolService:
                 retries += 1
                 wait = getattr(self.vn_client, "wait_seconds", 60)
                 print(
-                    f"Rate limit when fetching events for {symbol_name}. Retry {retries}/{self.vn_client.max_retries} after {wait}s"
+                    f"Rate limit when fetching events for {symbol_name}. "
+                    f"Retry {retries}/{self.vn_client.max_retries} after {wait}s"
                 )
                 time.sleep(wait)
             except Exception as e:
@@ -161,7 +177,8 @@ class SymbolService:
                 retries += 1
                 wait = getattr(self.vn_client, "wait_seconds", 60)
                 print(
-                    f"Rate limit when fetching officers for {symbol_name}. Retry {retries}/{self.vn_client.max_retries} after {wait}s"
+                    f"Rate limit when fetching officers for {symbol_name}. "
+                    f"Retry {retries}/{self.vn_client.max_retries} after {wait}s"
                 )
                 time.sleep(wait)
             except Exception as e:
@@ -206,6 +223,30 @@ class SymbolService:
             if self.per_symbol_sleep > 0:
                 time.sleep(self.per_symbol_sleep)
         return total
+
+    def import_all_industries(self) -> int:
+        """Import all industries (ICB) from vnstock Listing."""
+        try:
+            listing = Listing()
+            df = listing.industries_icb()
+        except Exception as e:
+            print(f"Error fetching industries_icb: {e}")
+            return 0
+
+        if df is None or df.empty:
+            print("No industries_icb data")
+            return 0
+
+        count = 0
+        for _, r in df.iterrows():
+            ind_id = safe_int(r.get("icb_code"))
+            ind_name = safe_str(r.get("icb_name"))
+            if ind_id is None and not ind_name:
+                continue
+            repo.upsert_industry({"id": ind_id, "name": ind_name})
+            count += 1
+        print(f"Imported/updated {count} industries")
+        return count
 
     def import_events_for_symbol(self, symbol_name: str) -> List[Dict]:
         symbol_obj = get_object_or_404(Symbol, name__iexact=symbol_name)
@@ -273,17 +314,17 @@ class SymbolService:
 
     def import_all_symbols(self) -> List[Dict[str, Any]]:
         """
-        Import toàn bộ symbols theo tất cả sàn (exchange).
+        Import toàn bộ symbols theo tất cả sàn (HSX).
         Trả về danh sách payload theo SymbolOut (tối giản).
         """
         results: List[Dict[str, Any]] = []
 
-        for symbol_name, exch in self.vn_client.iter_all_symbols():
+        for symbol_name, exch in self.vn_client.iter_all_symbols(exchange="HSX"):
             bundle, ok = self.vn_client.fetch_company_bundle(symbol_name)
             if not ok or not bundle:
                 print(f"Skip {symbol_name} ({exch}): no bundle")
                 continue
-
+            subsidiaries_df = bundle.get("subsidiaries")
             overview_df = bundle.get("overview_df_TCBS")
             overview_df_vci = bundle.get("overview_df_VCI")
 
@@ -295,133 +336,119 @@ class SymbolService:
 
             try:
                 with transaction.atomic():
+                    symbol = repo.upsert_symbol(
+                        symbol_name, defaults={"exchange": exch}
+                    )
+
                     # Industry
                     industry_df = bundle.get("industries_icb_df")
+                  #  print(industry_df)
                     if industry_df is not None and not industry_df.empty:
-                        industry_id = safe_int(industry_df.iloc[0].get("icb_code"))
-                        industry_name = safe_str(industry_df.iloc[0].get("icb_name"))
-                        industry = repo.upsert_industry({"id": industry_id, "name": industry_name})
+                        industries = []
+                        for _, row in industry_df.iterrows():
+                            industry_id = safe_int(row.get("icb_code"))
+                            industry_name = safe_str(row.get("icb_name"))
+                            level = safe_int(row.get("level"))
+                            industry = repo.upsert_industry(
+                                {
+                                    "id": industry_id,
+                                    "name": industry_name,
+                                    "level": level,
+                                }
+                            )
+                            industries.append(industry)
+
+                        for industry in industries:
+                            repo.upsert_symbol_industry(symbol, industry)
                     else:
                         industry = repo.get_or_create_industry("Unknown Industry")
+                        repo.upsert_symbol_industry(symbol, industry)
 
                     # Company
                     profile_df = bundle.get("profile_df")
-                    if profile_df is not None and not profile_df.empty:
-                        company_name = safe_str(profile_df.iloc[0].get("company_name"))
-                        company_profile = safe_str(profile_df.iloc[0].get("company_profile"))
-                        history = safe_str(profile_df.iloc[0].get("history_dev"))
+                    company_name = (
+                        safe_str(profile_df.iloc[0].get("company_name"))
+                        if profile_df is not None and not profile_df.empty
+                        else "Unknown Company"
+                    )
+
+                    if overview_df_vci is not None and not overview_df_vci.empty:
+                        overview_data = overview_df_vci.iloc[0]
+                        company_profile = safe_str(overview_data.get("company_profile"))
+                        history = safe_str(overview_data.get("history"))
+                        fin_ratio_share = safe_int(
+                            overview_data.get("financial_ratio_issue_share")
+                        )
+                        charter_cap = safe_int(overview_data.get("charter_capital"))
                     else:
-                        company_name = "Unknown Company"
                         company_profile = ""
                         history = ""
+                        fin_ratio_share = None
+                        charter_cap = None
 
                     company = repo.upsert_company(
                         company_name,
                         defaults={
-                            "parent": None,
                             "company_profile": company_profile,
                             "history": history,
                             "issue_share": safe_int(data.get("issue_share")),
-                            "stock_rating": safe_decimal(data.get("stock_rating"), None),
+                            "stock_rating": safe_decimal(
+                                data.get("stock_rating"), None
+                            ),
                             "no_employees": data.get("no_employees", None),
                             "website": safe_str(data.get("website", "")),
-                            "financial_ratio_issue_share": (
-                                safe_int(
-                                    overview_df_vci.iloc[0].get(
-                                        "financial_ratio_issue_share"
-                                    )
-                                )
-                                if overview_df_vci is not None and not overview_df_vci.empty
-                                else None
+                            "financial_ratio_issue_share": fin_ratio_share,
+                            "charter_capital": charter_cap,
+                            "outstanding_share": safe_int(
+                                data.get("outstanding_shares", 0)
                             ),
-                            "charter_capital": (
-                                safe_int(overview_df_vci.iloc[0].get("charter_capital"))
-                                if overview_df_vci is not None and not overview_df_vci.empty
-                                else None
+                            "foreign_percent": safe_decimal(
+                                data.get("foreign_percent", 0)
                             ),
-                            "outstanding_share": safe_int(data.get("outstanding_shares", 0)),
-                            "foreign_percent": safe_decimal(data.get("foreign_percent", 0)),
-                            "established_year": safe_int(data.get("established_year", 0)),
+                            "established_year": safe_int(
+                                data.get("established_year", 0)
+                            ),
+                            "delta_in_week": safe_int(data.get("delta_in_week", 0)),
+                            "delta_in_month": safe_int(data.get("delta_in_month", 0)),
+                            "delta_in_year": safe_int(data.get("delta_in_year", 0)),
                             "no_employees": safe_int(data.get("no_employees", 0)),
                         },
                     )
                     print(f"Upsert company '{company_name}' ({company.id})")
 
-                    # Link company with industry (M-N)
-                    if industry:
-                        company.industries.add(industry)
-
-                    # Symbol
-                    symbol = repo.upsert_symbol(
-                        symbol_name,
-                        defaults={"exchange": exch, "company": company},
-                    )
+                    symbol.company = company
+                    symbol.save()
                     print(f"Upsert symbol {symbol_name} ({symbol.id})")
-
-                    # Link symbol with industry (M-N)
-                    if industry:
-                        repo.upsert_symbol_industry(symbol, industry)
-
-                    # Related collections
+                    a = bundle.get("shareholders_df")
+                    print("shareholders_df", a)
                     repo.upsert_shareholders(
                         company, self._map_shareholders(bundle.get("shareholders_df"))
                     )
-                    repo.upsert_events(company, self._map_events(bundle.get("events_df")))
+                    repo.upsert_events(
+                        company, self._map_events(bundle.get("events_df"))
+                    )
                     repo.upsert_officers(
                         company, self._map_officers(bundle.get("officers_df"))
                     )
+                    print("subsidiaries_df", subsidiaries_df)
+                    repo.upsert_sub_company(
+                        self._map_sub_company(subsidiaries_df), company
+                    )
 
-                    # Subsidiaries
-                    subsidiaries_df = bundle.get("subsidiaries")
-                    if subsidiaries_df is not None and not subsidiaries_df.empty:
-                        for _, row in subsidiaries_df.iterrows():
-                            sub_name = safe_str(row.get("sub_company_name"))
-                            sub_percent = safe_decimal(row.get("sub_own_percent", 0))
-                            if not sub_name:
-                                continue
-
-                            defaults = {"parent": company}
-                            for field in ["company_profile", "history", "website"]:
-                                if row.get(field) is not None:
-                                    defaults[field] = safe_str(row.get(field))
-                            for field in [
-                                "issue_share",
-                                "financial_ratio_issue_share",
-                                "charter_capital",
-                                "outstanding_shares",
-                                "established_year",
-                                "no_employees",
-                                "stock_rating",
-                            ]:
-                                if row.get(field) is not None:
-                                    defaults[
-                                        field.replace("outstanding_shares", "outstanding_share")
-                                    ] = safe_int(row.get(field))
-                            if row.get("foreign_percent") is not None:
-                                defaults["foreign_percent"] = safe_decimal(
-                                    row.get("foreign_percent")
-                                )
-
-                            sub_company = repo.upsert_company(sub_name, defaults=defaults)
-                            # Link subsidiary with industry
-                            if industry:
-                                sub_company.industries.add(industry)
-                            if sub_percent is not None:
-                                repo.upsert_subsidiary_relation(
-                                    parent_company=company,
-                                    sub_company=sub_company,
-                                    own_percent=sub_percent,
-                                )
-                            print(f"   Sub company {sub_name} ({sub_company.id})")
-
-                    # Build payload
                     company_payload = {
                         "id": company.id,
+                        "company_name": company.company_name,
                         "company_profile": company.company_profile,
                         "history": company.history,
                         "issue_share": company.issue_share,
                         "financial_ratio_issue_share": company.financial_ratio_issue_share,
                         "charter_capital": company.charter_capital,
+                        "outstanding_share": company.outstanding_share,
+                        "foreign_percent": company.foreign_percent,
+                        "established_year": company.established_year,
+                        "no_employees": company.no_employees,
+                        "stock_rating": company.stock_rating,
+                        "website": company.website,
                         "updated_at": to_datetime(company.updated_at),
                     }
 
@@ -442,70 +469,277 @@ class SymbolService:
 
         return results
 
+    def import_industry_company_symbol(self) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+
+        for symbol_name, exch in self.vn_client.iter_all_symbols(exchange="HSX"):
+            bundle, ok = self.vn_client.fetch_company_bundle(symbol_name)
+            if not ok or not bundle:
+                print(f"Skip {symbol_name} ({exch}): no bundle")
+                continue
+            subsidiaries_df = bundle.get("subsidiaries")
+            overview_df = bundle.get("overview_df_TCBS")
+            overview_df_vci = bundle.get("overview_df_VCI")
+
+            if overview_df is None or overview_df.empty:
+                print(f"Skip {symbol_name} ({exch}): empty overview_df")
+                continue
+
+            data = overview_df.iloc[0]
+
+            try:
+                with transaction.atomic():
+                    # Industry
+                    industry_df = bundle.get("industries_icb_df")
+                    print(industry_df)
+                    if industry_df is not None and not industry_df.empty:
+                        industry_id = safe_int(industry_df.iloc[0].get("icb_code"))
+                        industry_name = safe_str(industry_df.iloc[0].get("icb_name"))
+                        level = safe_int(industry_df.iloc[0].get("level"))
+                        industry = repo.upsert_industry(
+                            {"id": industry_id, "name": industry_name, "level": level}
+                        )
+                    else:
+                        industry = repo.get_or_create_industry("Unknown Industry")
+
+                    # Company
+                    profile_df = bundle.get("profile_df")
+                    company_name = (
+                        safe_str(profile_df.iloc[0].get("company_name"))
+                        if profile_df is not None and not profile_df.empty
+                        else "Unknown Company"
+                    )
+
+                    if overview_df_vci is not None and not overview_df_vci.empty:
+                        overview_data = overview_df_vci.iloc[0]
+                        company_profile = safe_str(overview_data.get("company_profile"))
+                        history = safe_str(overview_data.get("history"))
+                        fin_ratio_share = safe_int(
+                            overview_data.get("financial_ratio_issue_share")
+                        )
+                        charter_cap = safe_int(overview_data.get("charter_capital"))
+                    else:
+                        company_profile = ""
+                        history = ""
+                        fin_ratio_share = None
+                        charter_cap = None
+
+                    company = repo.upsert_company(
+                        company_name,
+                        defaults={
+                            "company_profile": company_profile,
+                            "history": history,
+                            "issue_share": safe_int(data.get("issue_share")),
+                            "stock_rating": safe_decimal(
+                                data.get("stock_rating"), None
+                            ),
+                            "no_employees": data.get("no_employees", None),
+                            "website": safe_str(data.get("website", "")),
+                            "financial_ratio_issue_share": fin_ratio_share,
+                            "charter_capital": charter_cap,
+                            "outstanding_share": safe_int(
+                                data.get("outstanding_shares", 0)
+                            ),
+                            "foreign_percent": safe_decimal(
+                                data.get("foreign_percent", 0)
+                            ),
+                            "established_year": safe_int(
+                                data.get("established_year", 0)
+                            ),
+                            "delta_in_week": safe_int(data.get("delta_in_week", 0)),
+                            "delta_in_month": safe_int(data.get("delta_in_month", 0)),
+                            "delta_in_year": safe_int(data.get("delta_in_year", 0)),
+                            "no_employees": safe_int(data.get("no_employees", 0)),
+                        },
+                    )
+                    print(f"Upsert company '{company_name}' ({company.id})")
+
+                    # Symbol
+                    symbol = repo.upsert_symbol(
+                        symbol_name,
+                        defaults={"exchange": exch, "company": company},
+                    )
+                    print(f"Upsert symbol {symbol_name} ({symbol.id})")
+
+                    if industry:
+                        repo.upsert_symbol_industry(symbol, industry)
+
+                    repo.upsert_sub_company(
+                        self._map_sub_company(subsidiaries_df), company
+                    )
+
+                    company_payload = {
+                        "id": company.id,
+                        "company_name": company.company_name,
+                        "company_profile": company.company_profile,
+                        "history": company.history,
+                        "issue_share": company.issue_share,
+                        "financial_ratio_issue_share": company.financial_ratio_issue_share,
+                        "charter_capital": company.charter_capital,
+                        "outstanding_share": company.outstanding_share,
+                        "foreign_percent": company.foreign_percent,
+                        "established_year": company.established_year,
+                        "no_employees": company.no_employees,
+                        "stock_rating": company.stock_rating,
+                        "website": company.website,
+                        "updated_at": to_datetime(company.updated_at),
+                    }
+
+                    results.append(
+                        {
+                            "id": symbol.id,
+                            "name": symbol.name,
+                            "exchange": exch,
+                            "company": company_payload,
+                        }
+                    )
+
+            except Exception as e:
+                print(f"Error inserting {symbol_name}: {e}")
+
+            if self.per_symbol_sleep > 0:
+                time.sleep(self.per_symbol_sleep)
+
+        return results
+
+    def list_symbols_payload(self) -> List[Dict[str, Any]]:
+        """List all symbols with industries and minimal company info."""
+        symbols = repo.qs_symbols_with_industries()
+        data: List[Dict[str, Any]] = []
+        for s in symbols:
+            industries = [
+                {
+                    "id": ind.id,
+                    "name": ind.name,
+                    "updated_at": to_datetime(ind.updated_at),
+                }
+                for ind in s.industries.all()
+            ]
+            company_payload = None
+            if s.company:
+                company_payload = {
+                    "id": s.company.id,
+                    "company_name": s.company.company_name,
+                    "updated_at": to_datetime(s.company.updated_at),
+                }
+            data.append(
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "exchange": s.exchange,
+                    "updated_at": to_datetime(s.updated_at),
+                    "industries": industries,
+                    "company": company_payload,
+                }
+            )
+        return data
+
     def get_symbol_payload(self, symbol: str) -> Dict[str, Any]:
-        sym = get_object_or_404(repo.qs_symbol_by_name(symbol))
+        sym: Symbol = get_object_or_404(repo.qs_symbol_by_name(symbol))
         c = sym.company
 
-        shareholders = [
+        industries = [
             {
-                "id": sh.id,
-                "share_holder": sh.share_holder,
-                "quantity": sh.quantity,
-                "share_own_percent": (
-                    float(sh.share_own_percent) if sh.share_own_percent is not None else None
+                "id": ind.id,
+                "name": ind.name,
+                "level": ind.level,
+                "updated_at": to_datetime(ind.updated_at),
+            }
+            for ind in sym.industries.filter(level=1)
+        ]
+
+        shareholders = []
+        news_list = []
+        events_list = []
+        officers_list = []
+
+        if c:
+            shareholders = [
+                {
+                    "id": sh.id,
+                    "share_holder": sh.share_holder,
+                    "quantity": sh.quantity,
+                    "share_own_percent": (
+                        float(sh.share_own_percent)
+                        if sh.share_own_percent is not None
+                        else None
+                    ),
+                    "update_date": to_datetime(sh.update_date),
+                }
+                for sh in c.shareholders.all()[:5]
+            ]
+
+            news_list = [
+                {
+                    "id": n.id,
+                    "title": n.title,
+                    "news_image_url": n.news_image_url,
+                    "news_source_link": n.news_source_link,
+                    "price_change_pct": (
+                        float(n.price_change_pct) if n.price_change_pct is not None else None
+                    ),
+                    "public_date": to_epoch_seconds(n.public_date),
+                }
+                for n in c.news.all()[:5]
+            ]
+
+            events_list = [
+                {
+                    "id": e.id,
+                    "event_title": e.event_title,
+                    "public_date": to_datetime(e.public_date),
+                    "issue_date": to_datetime(e.issue_date),
+                    "source_url": e.source_url,
+                }
+                for e in c.events.all()[:5]
+            ]
+
+            officers_list = [
+                {
+                    "id": o.id,
+                    "officer_name": o.officer_name,
+                    "officer_position": o.officer_position,
+                    "position_short_name": o.position_short_name,
+                    "officer_owner_percent": (
+                        float(o.officer_owner_percent)
+                        if o.officer_owner_percent is not None
+                        else None
+                    ),
+                    "updated_at": to_datetime(o.updated_at),
+                }
+                for o in c.officers.all()[:5]
+            ]
+
+            company_payload = {
+                "id": c.id,
+                "company_name": c.company_name,
+                "company_profile": c.company_profile,
+                "history": c.history,
+                "issue_share": c.issue_share,
+                "financial_ratio_issue_share": c.financial_ratio_issue_share,
+                "charter_capital": c.charter_capital,
+                "outstanding_share": c.outstanding_share,
+                "foreign_percent": (
+                    float(c.foreign_percent) if c.foreign_percent is not None else None
                 ),
-                "update_date": to_datetime(sh.update_date),
+                "established_year": c.established_year,
+                "no_employees": c.no_employees,
+                "stock_rating": float(c.stock_rating) if c.stock_rating is not None else None,
+                "website": c.website,
+                "updated_at": to_datetime(c.updated_at),
+                "shareholders": shareholders,
+                "news": news_list,
+                "events": events_list,
+                "officers": officers_list,
             }
-            for sh in c.shareholders.all()[:5]
-        ]
-
-        events_list = [
-            {
-                "id": e.id,
-                "event_title": e.event_title,
-                "public_date": to_datetime(e.public_date),
-                "issue_date": to_datetime(e.issue_date),
-                "source_url": e.source_url,
-            }
-            for e in c.events.all()[:5]
-        ]
-
-        officers_list = [
-            {
-                "id": o.id,
-                "officer_name": o.officer_name,
-                "officer_position": o.officer_position,
-                "position_short_name": o.position_short_name,
-                "officer_owner_percent": (
-                    float(o.officer_owner_percent)
-                    if o.officer_owner_percent is not None
-                    else None
-                ),
-                "updated_at": to_datetime(o.updated_at),
-            }
-            for o in c.officers.all()[:10]
-        ]
-
-        company_payload = {
-            "id": c.id,
-            "company_profile": c.company_profile,
-            "issue_share": c.issue_share,
-            "history": c.history,
-            "company_name": c.company_name,
-            "stock_rating": float(c.stock_rating) if c.stock_rating is not None else None,
-            "website": c.website,
-            "no_employees": c.no_employees,
-            "financial_ratio_issue_share": c.financial_ratio_issue_share,
-            "charter_capital": c.charter_capital,
-            "updated_at": to_datetime(c.updated_at),
-            "shareholders": shareholders,
-            "events": events_list,
-            "officers": officers_list,
-        }
+        else:
+            company_payload = None
 
         return {
             "id": sym.id,
             "name": sym.name,
             "exchange": sym.exchange,
+            "updated_at": to_datetime(sym.updated_at),
+            "industries": industries,
             "company": company_payload,
         }

@@ -25,17 +25,16 @@ class VNStockClient:
         return df
 
     def iter_all_symbols(
-        self, exchange: Optional[str] = None
+        self, exchange: Optional[str] = "HSX"
     ) -> Generator[Tuple[str, str], None, None]:
         """
-        Yield (symbol, exchange).
-        - If exchange=None -> get all symbols.
-        - If exchange="HSX"/"HNX"/"UPCOM" -> filter by exchange.
+        Lấy danh sách các mã ở sàn HSX (mặc định). Nếu truyền sàn khác,
+        sẽ lọc theo sàn đó.
         """
         listing = Listing()
         df = listing.symbols_by_exchange()
-        if exchange:
-            df = df[df["exchange"] == exchange]
+        exch = (exchange or "HSX").upper()
+        df = df[df["exchange"] == exch]
 
         for _, row in df.iterrows():
             yield str(row.get("symbol")), str(row.get("exchange"))
@@ -44,7 +43,7 @@ class VNStockClient:
         self, symbol: str
     ) -> Tuple[Dict[str, pd.DataFrame], bool]:
         """
-        Returns a dictionary containing multiple DataFrames for a given symbol.
+        Lấy bundle thông tin công ty từ cả 2 nguồn TCBS và VCI.
         """
         retries = 0
         while retries <= self.max_retries:
@@ -58,7 +57,7 @@ class VNStockClient:
                     "overview_df_VCI": self._df_or_empty(vn_company_vci.overview()),
                     "profile_df": self._df_or_empty(vn_company_tcbs.profile()),
                     "shareholders_df": self._df_or_empty(
-                        vn_company_tcbs.shareholders()
+                        vn_company_vci.shareholders()
                     ),
                     "industries_icb_df": listing.industries_icb(),
                     "news_df": self._df_or_empty(vn_company_tcbs.news()),
@@ -75,8 +74,7 @@ class VNStockClient:
                 time.sleep(self.wait_seconds)
 
             except Exception as e:
-                # Catching the error here is fine, the ambiguity error won't happen anymore
-                print(f"❌ Error fetching {symbol}: {e}")
+                print(f"Error {symbol}: {e}")
                 return {}, False
 
         return {}, False
