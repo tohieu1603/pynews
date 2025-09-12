@@ -10,6 +10,7 @@ from vnstock import Listing
 from apps.stock.clients.vnstock_client import VNStockClient
 from apps.stock.models import Symbol
 from apps.stock.repositories import repositories as repo
+from apps.stock.services.mappers import DataMappers
 from apps.stock.utils.safe import (
     iso_str_or_none,
     safe_date_passthrough,
@@ -27,81 +28,6 @@ class SymbolService:
     ):
         self.vn_client = vn_client or VNStockClient()
         self.per_symbol_sleep = per_symbol_sleep
-
-    # -------- Mapping helpers --------
-    def _map_shareholders(self, df) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "share_holder": safe_str(r.get("share_holder")),
-                    "quantity": safe_int(r.get("quantity")),
-                    "share_own_percent": safe_decimal(r.get("share_own_percent")),
-                    "update_date": safe_date_passthrough(r.get("update_date")),
-                }
-            )
-        return rows
-
-    def _map_news(self, df) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "title": safe_str(r.get("news_title", "No Title")),
-                    "news_image_url": safe_str(r.get("news_image_url")),
-                    "news_source_link": safe_str(r.get("news_source_link")),
-                    "price_change_pct": safe_decimal(r.get("price_change_pct"), None),
-                    "public_date": to_epoch_seconds(r.get("public_date")),
-                }
-            )
-        return rows
-
-    def _map_events(self, df) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "event_title": safe_str(r.get("event_title", "No Title")),
-                    "source_url": safe_str(r.get("source_url")),
-                    "issue_date": safe_date_passthrough(r.get("issue_date")),
-                    "public_date": safe_date_passthrough(r.get("public_date")),
-                }
-            )
-        return rows
-
-    def _map_sub_company(self, df) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "company_name": safe_str(r.get("sub_company_name", "No Name")),
-                    "sub_own_percent": safe_decimal(r.get("sub_own_percent"), None),
-                }
-            )
-        return rows
-
-    def _map_officers(self, df) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "officer_name": safe_str(r.get("officer_name", "No Name")),
-                    "officer_position": safe_str(r.get("officer_position")),
-                    "position_short_name": safe_str(r.get("position_short_name")),
-                    "officer_owner_percent": safe_decimal(r.get("officer_own_percent")),
-                }
-            )
-        return rows
 
     # -------- Shareholder import helpers --------
     def _fetch_shareholders_df(self, symbol_name: str) -> pd.DataFrame:
@@ -127,20 +53,7 @@ class SymbolService:
         return pd.DataFrame()
 
     def _build_shareholder_rows(self, company_obj, df: pd.DataFrame) -> List[Dict]:
-        if df is None or df.empty:
-            return []
-        rows: List[Dict] = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "share_holder": safe_str(r.get("share_holder") or "").strip(),
-                    "quantity": safe_int(r.get("quantity")),
-                    "share_own_percent": safe_decimal(r.get("share_own_percent") or 0),
-                    "update_date": safe_date_passthrough(r.get("update_date")),
-                    "company": company_obj,
-                }
-            )
-        return rows
+        return DataMappers.build_shareholder_rows(company_obj, df)
 
     # -------- Events/Officers import helpers --------
     def _fetch_events_df(self, symbol_name: str) -> pd.DataFrame:
@@ -164,7 +77,7 @@ class SymbolService:
         return pd.DataFrame()
 
     def _build_event_rows(self, df: pd.DataFrame) -> List[Dict]:
-        return self._map_events(df)
+        return DataMappers.map_events(df)
 
     def _fetch_officers_df(self, symbol_name: str) -> pd.DataFrame:
         retries = 0
@@ -187,7 +100,7 @@ class SymbolService:
         return pd.DataFrame()
 
     def _build_officer_rows(self, df: pd.DataFrame) -> List[Dict]:
-        return self._map_officers(df)
+        return DataMappers.map_officers(df)
 
     # -------- Public APIs --------
     def import_shareholders_for_symbol(self, symbol_name: str) -> List[Dict]:
@@ -422,17 +335,17 @@ class SymbolService:
                     a = bundle.get("shareholders_df")
                     print("shareholders_df", a)
                     repo.upsert_shareholders(
-                        company, self._map_shareholders(bundle.get("shareholders_df"))
+                        company, DataMappers.map_shareholders(bundle.get("shareholders_df"))
                     )
                     repo.upsert_events(
-                        company, self._map_events(bundle.get("events_df"))
+                        company, DataMappers.map_events(bundle.get("events_df"))
                     )
                     repo.upsert_officers(
-                        company, self._map_officers(bundle.get("officers_df"))
+                        company, DataMappers.map_officers(bundle.get("officers_df"))
                     )
                     print("subsidiaries_df", subsidiaries_df)
                     repo.upsert_sub_company(
-                        self._map_sub_company(subsidiaries_df), company
+                        DataMappers.map_sub_company(subsidiaries_df), company
                     )
 
                     company_payload = {
@@ -565,7 +478,7 @@ class SymbolService:
                         repo.upsert_symbol_industry(symbol, industry)
 
                     repo.upsert_sub_company(
-                        self._map_sub_company(subsidiaries_df), company
+                        DataMappers.map_sub_company(subsidiaries_df), company
                     )
 
                     company_payload = {
