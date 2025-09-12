@@ -41,6 +41,13 @@ class OfficersOut(Schema):
     updated_at: Optional[datetime] = None
 
 
+# ---- SubCompany ----
+class SubCompanyOut(Schema):
+    id: int
+    company_name: Optional[str] = None
+    sub_own_percent: Optional[float] = None
+
+
 # ---- Company ----
 class CompanyOut(Schema):
     id: int
@@ -61,6 +68,7 @@ class CompanyOut(Schema):
     news: List[NewsOut] = []
     events: List[EventsOut] = []
     officers: List[OfficersOut] = []
+    subsidiaries: List[SubCompanyOut] = []
 
 
 # ---- Industry (ref) ----

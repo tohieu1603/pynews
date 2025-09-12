@@ -9,27 +9,22 @@ def get_or_create_industry(name: Optional[str]) -> Industry:
     return obj
 
 def upsert_industry(defaults: Dict) -> Industry:
-    """
-    Upsert Industry by primary key (id) if provided; otherwise by name.
-    Accepts defaults like {"id": <icb_code>, "name": <icb_name>}.
-    """
     ind_id = defaults.get("id") if isinstance(defaults, dict) else None
     name = defaults.get("name") if isinstance(defaults, dict) else None
     clean_name = (name or "").strip() or "Unknown Industry"
 
-    existing_by_name = Industry.objects.filter(name=clean_name).first()
-    if existing_by_name:
-        return existing_by_name
-
     if ind_id is not None:
         obj, _ = Industry.objects.update_or_create(
-            id=int(ind_id), defaults={"name": clean_name, "level": defaults.get("level")}
+            id=int(ind_id),
+            defaults={"name": clean_name, "level": defaults.get("level")},
         )
         return obj
 
-    # Fallback by name
-    obj, _ = Industry.objects.get_or_create(name=clean_name)
+    obj, _ = Industry.objects.get_or_create(
+        name=clean_name, defaults={"level": defaults.get("level")}
+    )
     return obj
+
 def upsert_company(company_name: Optional[str], defaults: Dict) -> Company:
     clean_name = (company_name or "").strip() or "Unknown Company"
     company, _ = Company.objects.update_or_create(
@@ -122,8 +117,8 @@ def qs_companies_with_related() -> QuerySet[Company]:
         .only("id", "company_name")
     )
 
-
 def qs_symbol_by_name(symbol: str):
+    
     return (
         Symbol.objects.filter(name=symbol)
         .select_related("company")
@@ -132,6 +127,7 @@ def qs_symbol_by_name(symbol: str):
             Prefetch("company__shareholders"),
             Prefetch("company__events"),
             Prefetch("company__officers"),
+            Prefetch("company__subsidiaries")
         )
     )
 def qs_symbols():

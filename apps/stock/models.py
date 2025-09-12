@@ -2,7 +2,7 @@ from django.db import models
 
 class Industry(models.Model):
     id = models.IntegerField(primary_key=True)  
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
     level = models.IntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 

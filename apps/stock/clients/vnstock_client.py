@@ -60,6 +60,7 @@ class VNStockClient:
                         vn_company_vci.shareholders()
                     ),
                     "industries_icb_df": listing.industries_icb(),
+                    "symbols_by_industries_df": listing.symbols_by_industries(),
                     "news_df": self._df_or_empty(vn_company_tcbs.news()),
                     "officers_df": self._df_or_empty(vn_company_vci.officers()),
                     "events_df": self._df_or_empty(vn_company_vci.events()),
@@ -75,6 +76,95 @@ class VNStockClient:
 
             except Exception as e:
                 print(f"Error {symbol}: {e}")
+        return {}, False
+
+
+    def fetch_company_bundle_safe(
+        self, symbol: str
+    ) -> Tuple[Dict[str, pd.DataFrame], bool]:
+        """
+        Safe/robust variant of fetch_company_bundle.
+        - Wraps each VNStock call in its own try/except.
+        - Returns partial bundle; ok=True if TCBS overview is available.
+        """
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                listing = Listing()
+                vn_company_tcbs = VNCompany(symbol=symbol, source="TCBS")
+                vn_company_vci = VNCompany(symbol=symbol, source="VCI")
+
+                # TCBS
+                try:
+                    overview_tcbs = self._df_or_empty(vn_company_tcbs.overview())
+                except Exception:
+                    overview_tcbs = pd.DataFrame()
+                try:
+                    profile_df = self._df_or_empty(vn_company_tcbs.profile())
+                except Exception:
+                    profile_df = pd.DataFrame()
+                try:
+                    news_df = self._df_or_empty(vn_company_tcbs.news())
+                except Exception:
+                    news_df = pd.DataFrame()
+                try:
+                    subs_df = self._df_or_empty(vn_company_tcbs.subsidiaries())
+                except Exception:
+                    subs_df = pd.DataFrame()
+
+                # VCI
+                try:
+                    overview_vci = self._df_or_empty(vn_company_vci.overview())
+                except Exception:
+                    overview_vci = pd.DataFrame()
+                try:
+                    shareholders_df = self._df_or_empty(vn_company_vci.shareholders())
+                except Exception:
+                    shareholders_df = pd.DataFrame()
+                try:
+                    officers_df = self._df_or_empty(vn_company_vci.officers())
+                except Exception:
+                    officers_df = pd.DataFrame()
+                try:
+                    events_df = self._df_or_empty(vn_company_vci.events())
+                except Exception:
+                    events_df = pd.DataFrame()
+
+                # Listing datasets
+                try:
+                    industries_icb_df = listing.industries_icb()
+                except Exception:
+                    industries_icb_df = pd.DataFrame()
+                try:
+                    symbols_by_industries_df = listing.symbols_by_industries()
+                except Exception:
+                    symbols_by_industries_df = pd.DataFrame()
+
+                bundle = {
+                    "overview_df_TCBS": overview_tcbs,
+                    "overview_df_VCI": overview_vci,
+                    "profile_df": profile_df,
+                    "shareholders_df": shareholders_df,
+                    "industries_icb_df": industries_icb_df,
+                    "symbols_by_industries_df": symbols_by_industries_df,
+                    "news_df": news_df,
+                    "officers_df": officers_df,
+                    "events_df": events_df,
+                    "subsidiaries": subs_df,
+                }
+
+                ok = overview_tcbs is not None and not overview_tcbs.empty
+                return bundle, bool(ok)
+
+            except SystemExit:
+                retries += 1
+                print(
+                    f"Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {self.wait_seconds}s..."
+                )
+                time.sleep(self.wait_seconds)
+            except Exception as e:
+                print(f"Error {symbol}: {e}")
                 return {}, False
 
+        return {}, False
         return {}, False
