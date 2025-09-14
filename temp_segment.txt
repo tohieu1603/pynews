@@ -1,0 +1,80 @@
+    def import_all_symbols(self) -> List[Dict[str, Any]]:
+        """
+        Import toàn bộ symbols với batch processing và parallel fetching.
+        Tối ưu performance so với phiên bản cũ.
+        """
+        print("Starting optimized import_all_symbols...")
+        results = []
+        
+        # Get all symbols to process
+        all_symbols = list(self.vn_client.iter_all_symbols(exchange="HSX"))
+        total_symbols = len(all_symbols)
+        print(f"Found {total_symbols} symbols to process")
+        
+        # Process in batches
+        for i in range(0, total_symbols, self.batch_size):
+            batch = all_symbols[i:i + self.batch_size]
+            batch_num = i // self.batch_size + 1
+            total_batches = (total_symbols + self.batch_size - 1) // self.batch_size
+            
+            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} symbols)")
+            
+            try:
+                batch_results = self._process_symbol_batch(batch)
+                results.extend(batch_results)
+                print(f"Batch {batch_num} completed: {len(batch_results)} symbols processed")
+                
+                if self.per_symbol_sleep > 0 and i + self.batch_size < total_symbols:
+                    sleep_time = self.per_symbol_sleep * len(batch) / self.max_workers
+                    print(f"Sleeping {sleep_time:.1f}s before next batch...")
+                    time.sleep(sleep_time)
+                    
+            except Exception as e:
+                print(f"Error processing batch {batch_num}: {e}")
+                continue
+        
+        print(f"Import completed! {len(results)} symbols processed successfully")
+        return results
+
+    def import_all_symbols_bulk_optimized(self) -> List[Dict[str, Any]]:
+        """
+        Phiên bản tối ưu với bulk database operations.
+        Sử dụng bulk_create và bulk_update để tăng performance database.
+        """
+        print("Starting bulk optimized import_all_symbols...")
+        results = []
+        
+        # Collect all data first
+        all_symbols = list(self.vn_client.iter_all_symbols(exchange="HSX"))
+        total_symbols = len(all_symbols)
+        print(f"Found {total_symbols} symbols to process")
+        
+        # Parallel fetch all data first
+        all_fetched_data = []
+        for i in range(0, total_symbols, self.batch_size):
+            batch = all_symbols[i:i + self.batch_size]
+            batch_num = i // self.batch_size + 1
+            print(f"Fetching batch {batch_num}...")
+            
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                future_to_symbol = {
+                    executor.submit(self._fetch_symbol_data_safe, symbol_name, exchange): (symbol_name, exchange)
+                    for symbol_name, exchange in batch
+                }
+                
+                for future in as_completed(future_to_symbol):
+                    result = future.result()
+                    if result:
+                        all_fetched_data.append(result)
+        
+        print(f"Fetched {len(all_fetched_data)} symbols data. Processing in bulk...")
+        
+        # Process all data in bulk transactions
+        symbols_to_create = []
+        companies_to_create = []
+        industries_to_create = []
+        
+        for data in all_fetched_data:
+            try:
+                processed = self._prepare_bulk_data(data)
+                if processed:

@@ -76,6 +76,7 @@ class VNStockClient:
 
             except Exception as e:
                 print(f"Error {symbol}: {e}")
+                return {}, False
         return {}, False
 
 
@@ -166,5 +167,4 @@ class VNStockClient:
                 print(f"Error {symbol}: {e}")
                 return {}, False
 
-        return {}, False
         return {}, False
