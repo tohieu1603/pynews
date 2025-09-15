@@ -7,6 +7,5 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", api.urls),  
     path("login/", oauth_callback, name="oauth_callback"),
-    # Google OAuth redirect (matches GOOGLE_REDIRECT_URI in .env)
     path("api/auth/google/callback", oauth_callback, name="google_oauth_callback"),
 ]

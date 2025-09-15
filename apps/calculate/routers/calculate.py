@@ -63,3 +63,99 @@ def import_all_financials(request):
         
     except Exception as e:
         raise HttpError(500, f"Error importing all financials: {str(e)}")
+
+
+@router.post("/import/income/all", response=ImportSummarySchema)
+def import_income_all(request):
+    """Import only income statements for ALL symbols in database."""
+    try:
+        start_time = time.time()
+        service = CalculateService()
+        result = service.import_income_statements_all()
+        processing_time = time.time() - start_time
+
+        return ImportSummarySchema(
+            total_symbols=result["total_symbols"],
+            successful_imports=result["successful_symbols"],
+            failed_imports=result["failed_symbols"],
+            total_balance_sheets=result["total_balance_sheets"],
+            total_income_statements=result["total_income_statements"],
+            total_cash_flows=result["total_cash_flows"],
+            processing_time=round(processing_time, 2),
+            results=[
+                ImportResultSchema(
+                    symbol=detail["symbol"],
+                    success=detail["success"],
+                    balance_sheets=detail["balance_sheets"],
+                    income_statements=detail["income_statements"],
+                    cash_flows=detail["cash_flows"],
+                    errors=detail["errors"]
+                ) for detail in result["details"]
+            ]
+        )
+    except Exception as e:
+        raise HttpError(500, f"Error importing income statements: {str(e)}")
+
+
+@router.post("/import/cashflow/all", response=ImportSummarySchema)
+def import_cashflow_all(request):
+    """Import only cash flows for ALL symbols in database."""
+    try:
+        start_time = time.time()
+        service = CalculateService()
+        result = service.import_cash_flows_all()
+        processing_time = time.time() - start_time
+
+        return ImportSummarySchema(
+            total_symbols=result["total_symbols"],
+            successful_imports=result["successful_symbols"],
+            failed_imports=result["failed_symbols"],
+            total_balance_sheets=result["total_balance_sheets"],
+            total_income_statements=result["total_income_statements"],
+            total_cash_flows=result["total_cash_flows"],
+            processing_time=round(processing_time, 2),
+            results=[
+                ImportResultSchema(
+                    symbol=detail["symbol"],
+                    success=detail["success"],
+                    balance_sheets=detail["balance_sheets"],
+                    income_statements=detail["income_statements"],
+                    cash_flows=detail["cash_flows"],
+                    errors=detail["errors"]
+                ) for detail in result["details"]
+            ]
+        )
+    except Exception as e:
+        raise HttpError(500, f"Error importing cash flows: {str(e)}")
+
+
+@router.post("/import/ratio/all", response=ImportSummarySchema)
+def import_ratio_all(request):
+    """Import only ratios for ALL symbols in database."""
+    try:
+        start_time = time.time()
+        service = CalculateService()
+        result = service.import_ratios_all()
+        processing_time = time.time() - start_time
+
+        return ImportSummarySchema(
+            total_symbols=result["total_symbols"],
+            successful_imports=result["successful_symbols"],
+            failed_imports=result["failed_symbols"],
+            total_balance_sheets=result["total_balance_sheets"],
+            total_income_statements=result["total_income_statements"],
+            total_cash_flows=result["total_cash_flows"],
+            processing_time=round(processing_time, 2),
+            results=[
+                ImportResultSchema(
+                    symbol=detail["symbol"],
+                    success=detail["success"],
+                    balance_sheets=detail["balance_sheets"],
+                    income_statements=detail["income_statements"],
+                    cash_flows=detail["cash_flows"],
+                    errors=detail["errors"]
+                ) for detail in result["details"]
+            ]
+        )
+    except Exception as e:
+        raise HttpError(500, f"Error importing ratios: {str(e)}")

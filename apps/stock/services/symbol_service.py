@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404
 from vnstock import Listing
 
 from apps.stock.clients.vnstock_client import VNStockClient
-from apps.stock.models import Symbol
+from apps.stock.models import Symbol, Events
 from apps.stock.repositories import repositories as repo
 from apps.stock.services.mappers import DataMappers
 from apps.stock.services.industry_resolver import IndustryResolver
@@ -143,7 +143,24 @@ class SymbolService:
             print(f"No valid event rows for {symbol_name}")
             return []
 
+        # Upsert base event records
         repo.upsert_events(company_obj, rows)
+        # Ensure date fields are persisted (public_date, issue_date)
+        try:
+            for r in rows:
+                title = safe_str(r.get("event_title"))
+                pub = r.get("public_date")
+                iss = r.get("issue_date")
+                to_update = {}
+                if pub is not None:
+                    to_update["public_date"] = pub
+                if iss is not None:
+                    to_update["issue_date"] = iss
+                if to_update:
+                    Events.objects.filter(event_title=title, company=company_obj).update(**to_update)
+        except Exception as e:
+            print(f"Warning: failed to update event dates for {symbol_name}: {e}")
+
         print(f"Imported/updated {len(rows)} events for {symbol_name}")
         return rows
 
@@ -194,7 +211,7 @@ class SymbolService:
         """
         Import toàn bộ symbols đơn giản, không dùng batch, rate limit hay bulk.
         """
-        print("Starting simple import_all_symbols...")
+        print("Starting import_all_symbols with DB-first seeding...")
         results = []
         
         try:
@@ -207,8 +224,27 @@ class SymbolService:
         except Exception as e:
             print(f"Error initializing client method: {e}")
             return results
-        
-        for symbol_name, exchange in self.vn_client.iter_all_symbols(exchange="HSX"):
+        # Seed DB with all symbols once if empty
+        try:
+            db_symbols = list(repo.qs_all_symbols())
+            if not db_symbols or all(not safe_str(s.name) for s in db_symbols):
+                print("Symbols table empty. Seeding from vnstock...")
+                seeded = 0
+                for symbol_name, exchange in self.vn_client.iter_all_symbols(exchange="HSX"):
+                    repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})
+                    seeded += 1
+                print(f"Seeded {seeded} symbols from vnstock")
+                db_symbols = list(repo.qs_all_symbols())
+            else:
+                print(f"Found {len(db_symbols)} symbols in DB. Skipping vnstock seed.")
+        except Exception as e:
+            print(f"Error during symbol seeding/check: {e}")
+            db_symbols = list(repo.qs_all_symbols())
+
+        # Process symbols from DB
+        for sym in db_symbols:
+            symbol_name = sym.name
+            exchange = getattr(sym, 'exchange', None)
             try:
                 bundle, ok = fetch_method(symbol_name)
                 if not ok or not bundle:
@@ -226,9 +262,7 @@ class SymbolService:
                 data = overview_df.iloc[0]
                 
                 with transaction.atomic():
-                    symbol = repo.upsert_symbol(
-                        symbol_name, defaults={"exchange": exchange}
-                    )
+                    symbol = repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})
 
                     try:
                         industries = self.industry_resolver.resolve_symbol_industries(bundle, symbol_name)
