@@ -41,7 +41,7 @@ staticfiles/
 # --- Environment / secrets ---
 .env
 *.env
-.env.*
+*.env.*
 
 # --- Jupyter ---
 .ipynb_checkpoints/

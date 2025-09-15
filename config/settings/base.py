@@ -6,11 +6,28 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "AIzaSyAz_mXKiii8tVzKzqmBSl9y51CtmB0aO8I"
 
-DEBUG = True
+def _env_bool(key: str, default: str = "False") -> bool:
+    val = os.getenv(key, str(default))
+    return val.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-ALLOWED_HOSTS = True
+
+def env_list(key: str, default: str = "") -> list[str]:
+    raw = os.getenv(key, default)
+    return [x.strip() for x in str(raw).split(",") if x and x.strip()]
+
+
+# Core security and debug settings
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-secret-key")
+
+# Default True for local dev; override via .env
+DEBUG = _env_bool("DEBUG", "True")
+
+# Comma-separated hosts in .env, e.g. "localhost,127.0.0.1"
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    "localhost,127.0.0.1,0.0.0.0,[::1]",
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -62,13 +79,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("DB_NAME", "db4"),
-        "USER": os.getenv("DB_USER", "postgres"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "123456789"),
-        "HOST": os.getenv("DB_HOST", "localhost"),
-        "PORT": os.getenv("DB_PORT", "5432"),
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST"),
+        "PORT": os.getenv("DB_PORT"),
     }
 }
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -84,7 +102,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
 # Authentication Backends (use default)
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
@@ -98,20 +115,26 @@ NINJA_PAGINATION_MAX_LIMIT = 100
 NINJA_NUM_PROXIES = 0
 NINJA_DEFAULT_THROTTLE_RATES = {}
 NINJA_FIX_REQUEST_FILES_METHODS = ['PUT', 'PATCH']
+
 # Google OAuth (configure via .env)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
-JWT_SECRET = os.getenv("JWT_SECRET", SECRET_KEY)
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 JWT_ACCESS_TTL_MIN = int(os.getenv("JWT_ACCESS_TTL_MIN", "60"))
 JWT_REFRESH_TTL_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# =========================
+# CORS / CSRF
+# =========================
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
+CORS_ALLOW_CREDENTIALS = True
+
+# Optional: trusted origins for CSRF (comma-separated)
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
 
 CORS_ALLOW_CREDENTIALS = True

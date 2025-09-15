@@ -1,18 +1,16 @@
 from .base import *
-import os
-
 
 DEBUG = True
-
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("DB_NAME", "db4"),
-        "USER": os.getenv("DB_USER", "postgres"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "123456789"), 
-        "HOST": os.getenv("DB_HOST", "localhost"),
-        "PORT": os.getenv("DB_PORT", "5432"),
-    }
-}
+# Database config cho dev (ghi đè nếu cần)
+DATABASES["default"]["NAME"] = os.getenv("DB_NAME", "db_dev")
+DATABASES["default"]["USER"] = os.getenv("DB_USER", "postgres")
+DATABASES["default"]["PASSWORD"] = os.getenv("DB_PASSWORD", "123456789")
+DATABASES["default"]["HOST"] = os.getenv("DB_HOST", "localhost")
+DATABASES["default"]["PORT"] = os.getenv("DB_PORT", "5432")
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]

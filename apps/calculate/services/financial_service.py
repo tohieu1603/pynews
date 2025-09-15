@@ -43,15 +43,12 @@ class CalculateService:
 
         print(f"Starting import for {result['total_symbols']} symbols...")
         
-        # Process each symbol
         for symbol in symbols:
             print(f"Processing symbol: {symbol.name}")
             symbol_result = self._import_symbol_data(symbol)
             
-            # Add to results
             result["details"].append(symbol_result)
             
-            # Update counters
             if symbol_result.get("success", False):
                 print(f"✓ Successfully imported {symbol.name}")
                 result["successful_symbols"] += 1
@@ -63,7 +60,6 @@ class CalculateService:
                 result["failed_symbols"] += 1
                 result["errors"].extend(symbol_result.get("errors", []))
             
-            # Sleep between symbols to respect API rate limits
             if self.sleep_between_symbols > 0:
                 time.sleep(self.sleep_between_symbols)
 
@@ -179,7 +175,6 @@ class CalculateService:
                 return symbol_result
             
             with transaction.atomic():
-                # Import balance sheets
                 balance_sheet_count = self._import_balance_sheets(symbol, bundle)
                 income_statement_count = self._import_income_statements(symbol, bundle)
                 cash_flow_count = self._import_cash_flows(symbol, bundle)

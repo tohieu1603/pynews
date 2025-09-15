@@ -1,6 +1,6 @@
 
 from django.db import models
-
+from apps.stock.models import Symbol
 STOCK_SYMBOL_MODEL = 'stock.Symbol'
 
 

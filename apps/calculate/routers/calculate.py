@@ -5,9 +5,13 @@ from typing import List
 from ninja import Router, Schema
 from ninja.errors import HttpError
 import time
+from django.db import transaction
 
 from apps.calculate.services.financial_service import CalculateService
-
+from apps.calculate.services.query_financial_service import QueryFinancialService
+from apps.calculate.dtos.cash_flow_dto import CashFlowOut
+from apps.calculate.dtos.income_statement_dto import InComeOut
+from apps.calculate.dtos.blance_sheet_dto import BalanceSheetOut
 router = Router(tags=["calculate"])
 
 
@@ -159,3 +163,17 @@ def import_ratio_all(request):
         )
     except Exception as e:
         raise HttpError(500, f"Error importing ratios: {str(e)}")
+
+
+@router.get("/cashflows/{symbol_id}", response=List[CashFlowOut])
+def get_cashflows(request, symbol_id: int, limit: int = 10):
+    service = QueryFinancialService()
+    return service.get_cash_flow_statements(symbol_id, limit)
+@router.get("/incomes/{symbol_id}", response=List[InComeOut])
+def get_incomes(request, symbol_id: int):
+    service = QueryFinancialService()
+    return service.get_income_statements(symbol_id)
+@router.get("/balances/{symbol_id}", response=List[BalanceSheetOut])
+def get_balances(request, symbol_id: int):
+    service = QueryFinancialService()
+    return service.get_balance_sheets(symbol_id)
