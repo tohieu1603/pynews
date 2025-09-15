@@ -130,12 +130,9 @@ def qs_symbol_by_name(symbol: str):
             Prefetch("company__subsidiaries")
         )
     )
-def qs_symbols():
-    qs = (
-        Symbol.objects
-        .select_related("company")
-        .filter
-    )
+def qs_symbols(limit: Optional[int] = 10):
+   return (
+        Symbol.objects.all().order_by('id')[:limit])
 
 def qs_industries_with_symbols() -> QuerySet[Industry]:
     return (

@@ -21,7 +21,7 @@ from apps.stock.utils.safe import (
     to_datetime,
     to_epoch_seconds,
 )
-
+from apps.stock.schemas import SymbolList
 
 class SymbolService:
     def __init__(
@@ -379,7 +379,18 @@ class SymbolService:
                 }
             )
         return data
-
+    def get_symbols(self, limit: int = 10) -> List[SymbolList]:
+        
+        symbols = repo.qs_symbols(limit=limit)
+        return [
+            SymbolList(
+                id=s.id,
+                name=s.name,
+                exchange=s.exchange,
+                updated_at=to_datetime(s.updated_at),
+            )
+            for s in symbols
+        ]
     def get_symbol_payload(self, symbol: str) -> Dict[str, Any]:
         sym: Symbol = get_object_or_404(repo.qs_symbol_by_name(symbol))
         c = sym.company

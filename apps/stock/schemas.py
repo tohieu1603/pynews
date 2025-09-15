@@ -86,7 +86,11 @@ class SymbolOut(Schema):
     updated_at: Optional[datetime] = None
     industries: List[IndustryRefOut] = []
     company: Optional[CompanyOut] = None
-
+class SymbolList(Schema):
+    id: int
+    name: str
+    exchange: str
+    updated_at: datetime
 
 # ---- Industry ----
 class IndustryOut(Schema):

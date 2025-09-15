@@ -9,7 +9,7 @@ from typing import List
 from ninja import Router
 from ninja.pagination import paginate, PageNumberPagination
 
-from apps.stock.schemas import IndustryOut, SymbolOut, CompanyOut
+from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList
 from apps.stock.services.symbol_service import SymbolService
 from apps.stock.services.company_service import CompanyService
 from apps.stock.services.industry_service import IndustryService
@@ -28,10 +28,10 @@ def import_all_symbols_basic(request):
     service = SymbolService()
     return service.import_all_symbols_basic()
 
-@router.get("/symbols", response=List[SymbolOut])
-def list_symbols(request):
-    service = SymbolService()
-    return service.list_symbols_payload()
+# @router.get("/symbols", response=List[SymbolOut])
+# def list_symbols(request):
+#     service = SymbolService()
+#     return service.list_symbols_payload()
 
 # ---------- Imports by industry ----------
 # @router.post("/symbols/import_by_industry/{icb_code}", response=dict)
@@ -93,3 +93,7 @@ def get_symbol(request, symbol: str):
     service = SymbolService()
     return service.get_symbol_payload(symbol.upper())
 
+@router.get("/symbols", response=List[SymbolList])
+def get_symbol_by_name(request, limit: int = 10):
+    service = SymbolService()
+    return service.get_symbols(limit=limit)
