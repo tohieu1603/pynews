@@ -9,7 +9,7 @@ from typing import List
 from ninja import Router
 from ninja.pagination import paginate, PageNumberPagination
 
-from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList
+from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList, SubCompanyOut
 from apps.stock.services.symbol_service import SymbolService
 from apps.stock.services.company_service import CompanyService
 from apps.stock.services.industry_service import IndustryService
@@ -22,11 +22,17 @@ def import_all_symbols(request):
     service = SymbolService()
     return service.import_all_symbols()
 
-@router.post("/symbols/import_all/basic", response=List[SymbolOut])
-def import_all_symbols_basic(request):
-    """Import symbols chỉ với thông tin cơ bản (không import events, officers, shareholders, subsidiaries)"""
+@router.post("/symbols/import_symbol_company", response=List[SymbolOut])
+def import_symbols_company(request):
+    """Import symbol + company, không động tới industry hay bảng liên quan."""
     service = SymbolService()
-    return service.import_all_symbols_basic()
+    return service.import_symbols_companies_only()
+
+# @router.post("/symbols/import_all/basic", response=List[SymbolOut])
+# def import_all_symbols_basic(request):
+#     """Import symbols chỉ với thông tin cơ bản (không import events, officers, shareholders, subsidiaries)"""
+#     service = SymbolService()
+#     return service.import_all_symbols_basic()
 
 # @router.get("/symbols", response=List[SymbolOut])
 # def list_symbols(request):
@@ -79,6 +85,19 @@ def import_all_industries(request):
     service = SymbolService()
     count = service.import_all_industries()
     return {"imported_industries_count": count}
+
+@router.post("/sub_companies/import_all", response=dict)
+def import_all_sub_companies(request):
+    """Import subsidiaries for all symbols with companies"""
+    from apps.stock.services.vnstock_import_service import VnstockImportService
+    service = VnstockImportService()
+    results = service.import_sub_companies_for_all_symbols()
+    total_sub_companies = sum(r.get('sub_companies_count', 0) for r in results)
+    return {
+        "symbols_processed": len(results),
+        "total_sub_companies": total_sub_companies,
+        "results": results
+    }
 
 # ---------- Listing endpoints ----------
 @router.get("/company", response=List[CompanyOut])

@@ -1,7 +1,7 @@
 from typing import List
 from ninja.errors import HttpError  
 from apps.calculate.repositories import qs_cash_flow, qs_income_statement
-from apps.calculate.dtos.cash_flow_dto import CashFlowOut
+from apps.calculate.dtos.cash_flow_dto import CashFlowOut, SymbolOut as CashFlowSymbolOut
 from apps.calculate.dtos.income_statement_dto import InComeOut
 from apps.calculate.dtos.income_statement_dto import SymbolOut
 from apps.calculate.dtos.blance_sheet_dto import BalanceSheetOut
@@ -16,15 +16,16 @@ class QueryFinancialService:
                 CashFlowOut(
                     year=cf.year_report,
                     quarter=cf.length_report,
-                    symbol={
-                        "id": cf.symbol.id,
-                        "name": cf.symbol.name,
-                        "exchange": cf.symbol.exchange,
-                    },
-                    profits_from_other_activities=cf.profits_from_other_activities,
+                    symbol=CashFlowSymbolOut(
+                        id=cf.symbol.id,
+                        name=cf.symbol.name,
+                        exchange=getattr(cf.symbol, "exchange", None),
+                    ),
+                    # Map available fields from model, set others to None
+                    profits_from_other_activities=None,  # Not in current model
                     operating_profit_before_changes_in_working_capital=cf.operating_profit_before_changes_in_working_capital,
-                    net_cash_flows_from_operating_activities_before_bit=cf.net_cash_flows_from_operating_activities_before_bit,
-                    payment_from_reserves=cf.payment_from_reserves,
+                    net_cash_flows_from_operating_activities_before_bit=None,  # Not in current model
+                    payment_from_reserves=None,  # Not in current model
                     purchase_of_fixed_assets=cf.purchase_of_fixed_assets,
                     gain_on_dividend=cf.gain_on_dividend,
                     net_cash_flows_from_investing_activities=cf.net_cash_flows_from_investing_activities,
@@ -44,7 +45,10 @@ class QueryFinancialService:
             ]
 
         except Exception as e:
-            raise HttpError(500, f"Lỗi hệ thống, vui lòng thử lại sau.")
+            import traceback
+            print(f"Error in get_cash_flow_statements: {e}")
+            print(traceback.format_exc())
+            raise HttpError(500, "Lỗi hệ thống, vui lòng thử lại sau.")
     def get_income_statements(self, symbol_id: int) -> List[InComeOut]:
         try:
             qs = qs_income_statement(symbol_id)
@@ -60,40 +64,46 @@ class QueryFinancialService:
                         name=inc.symbol.name,
                         exchange=getattr(inc.symbol, "exchange", None)
                     ),
-                    revenue=inc.revenue,
-                    revenue_yoy=inc.revenue_yoy,
-                    attribute_to_parent_company=inc.attribute_to_parent_company,
-                    attribute_to_parent_company_yoy=inc.attribute_to_parent_company_yoy,
-                    interest_and_similar_income=inc.interest_and_similar_income,
-                    interest_and_similar_expenses=inc.interest_and_similar_expenses,
-                    net_interest_income=inc.net_interest_income,
-                    fees_and_comission_income=inc.fees_and_comission_income,
-                    fees_and_comission_expenses=inc.fees_and_comission_expenses,
-                    net_fee_and_commission_income=inc.net_fee_and_commission_income,
-                    net_gain_foreign_currency_and_gold_dealings=inc.net_gain_foreign_currency_and_gold_dealings,
-                    net_gain_trading_of_trading_securities=inc.net_gain_trading_of_trading_securities,
-                    net_gain_disposal_of_investment_securities=inc.net_gain_disposal_of_investment_securities,
-                    net_other_income=inc.net_other_income,
-                    other_expenses=inc.other_expenses,
-                    net_other_income_expenses=inc.net_other_income_expenses,
-                    dividends_received=inc.dividends_received,
-                    total_operating_revenue=inc.total_operating_revenue,
+                    # Map model fields to DTO fields correctly
+                    revenue=inc.revenue_bn_vnd,
+                    revenue_yoy=inc.revenue_yoy_percent,
+                    attribute_to_parent_company=inc.attribute_to_parent_company_bn_vnd,
+                    attribute_to_parent_company_yoy=inc.attribute_to_parent_company_yo_y_percent,
+                    # Map available fields
                     general_admin_expenses=inc.general_admin_expenses,
-                    operating_profit_before_provision=inc.operating_profit_before_provision,
-                    provision_for_credit_losses=inc.provision_for_credit_losses,
                     profit_before_tax=inc.profit_before_tax,
-                    tax_for_the_year=inc.tax_for_the_year,
                     business_income_tax_current=inc.business_income_tax_current,
                     business_income_tax_deferred=inc.business_income_tax_deferred,
                     minority_interest=inc.minority_interest,
                     net_profit_for_the_year=inc.net_profit_for_the_year,
                     attributable_to_parent_company=inc.attributable_to_parent_company,
-                    eps_basis=inc.eps_basis,
+                    # Set unavailable fields to None
+                    interest_and_similar_income=None,
+                    interest_and_similar_expenses=None,
+                    net_interest_income=None,
+                    fees_and_comission_income=None,
+                    fees_and_comission_expenses=None,
+                    net_fee_and_commission_income=None,
+                    net_gain_foreign_currency_and_gold_dealings=None,
+                    net_gain_trading_of_trading_securities=None,
+                    net_gain_disposal_of_investment_securities=None,
+                    net_other_income=inc.net_other_income_expenses,
+                    other_expenses=None,
+                    net_other_income_expenses=inc.net_other_income_expenses,
+                    dividends_received=None,
+                    total_operating_revenue=None,
+                    operating_profit_before_provision=None,
+                    provision_for_credit_losses=None,
+                    tax_for_the_year=None,
+                    eps_basis=None,
                 )
                 for inc in qs
             ]
 
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"Error in get_income_statements: {e}")
+            print(traceback.format_exc())
             raise HttpError(500, "Lỗi hệ thống, vui lòng thử lại sau.")
     
     def get_balance_sheets(self, symbol_id: int) -> List[BalanceSheetOut]:
@@ -111,36 +121,41 @@ class QueryFinancialService:
                         name=bs.symbol.name,
                         exchange=getattr(bs.symbol, "exchange", None)
                     ),
-                    current_assets=bs.current_assets,
-                    cash_and_cash_equivalents=bs.cash_and_cash_equivalents,
-                    short_term_investments=bs.short_term_investments,
-                    accounts_receivable=bs.accounts_receivable,
+                    # Map model fields to DTO fields correctly
+                    current_assets=bs.current_assets_bn_vnd,
+                    cash_and_cash_equivalents=bs.cash_and_cash_equivalents_bn_vnd,
+                    short_term_investments=bs.short_term_investments_bn_vnd,
+                    accounts_receivable=bs.accounts_receivable_bn_vnd,
                     net_inventories=bs.net_inventories,
-                    prepayments_to_suppliers=bs.prepayments_to_suppliers,
-                    other_current_assets=bs.other_current_assets,
-                    long_term_assets=bs.long_term_assets,
-                    fixed_assets=bs.fixed_assets,
-                    long_term_investments=bs.long_term_investments,
-                    long_term_prepayments=bs.long_term_prepayments,
-                    other_long_term_assets=bs.other_long_term_assets,
-                    other_long_term_receivables=bs.other_long_term_receivables,
-                    long_term_trade_receivables=bs.long_term_trade_receivables,
-                    total_assets=bs.total_assets,
-                    liabilities=bs.liabilities,
-                    current_liabilities=bs.current_liabilities,
-                    short_term_borrowings=bs.short_term_borrowings,
-                    advances_from_customers=bs.advances_from_customers,
-                    long_term_liabilities=bs.long_term_liabilities,
-                    long_term_borrowings=bs.long_term_borrowings,
-                    owners_equity=bs.owners_equity,
-                    capital_and_reserves=bs.capital_and_reserves,
-                    common_shares=bs.common_shares,
-                    paid_in_capital=bs.paid_in_capital,
-                    undistributed_earnings=bs.undistributed_earnings,
-                    investment_and_development_funds=bs.investment_and_development_funds,
-                    total_resources=bs.total_resources,
+                    prepayments_to_suppliers=bs.prepayments_to_suppliers_bn_vnd,
+                    other_current_assets=bs.other_current_assets_bn_vnd,
+                    long_term_assets=bs.long_term_assets_bn_vnd,
+                    fixed_assets=bs.fixed_assets_bn_vnd,
+                    long_term_investments=bs.long_term_investments_bn_vnd,
+                    long_term_prepayments=bs.long_term_prepayments_bn_vnd,
+                    other_long_term_assets=bs.other_long_term_assets_bn_vnd,
+                    other_long_term_receivables=bs.other_long_term_receivables_bn_vnd,
+                    long_term_trade_receivables=bs.long_term_trade_receivables_bn_vnd,
+                    total_assets=bs.total_assets_bn_vnd,
+                    liabilities=bs.liabilities_bn_vnd,
+                    current_liabilities=bs.current_liabilities_bn_vnd,
+                    short_term_borrowings=bs.short_term_borrowings_bn_vnd,
+                    advances_from_customers=bs.advances_from_customers_bn_vnd,
+                    long_term_liabilities=bs.long_term_liabilities_bn_vnd,
+                    long_term_borrowings=bs.long_term_borrowings_bn_vnd,
+                    owners_equity=bs.owners_equitybn_vnd,  # Note: typo in model field name
+                    capital_and_reserves=bs.capital_and_reserves_bn_vnd,
+                    common_shares=bs.common_shares_bn_vnd,
+                    paid_in_capital=bs.paid_in_capital_bn_vnd,
+                    undistributed_earnings=bs.undistributed_earnings_bn_vnd,
+                    investment_and_development_funds=bs.investment_and_development_funds_bn_vnd,
+                    total_resources=bs.total_resources_bn_vnd,
                 )
                 for bs in qs
             ]
-        except Exception:
+
+        except Exception as e:
+            import traceback
+            print(f"Error in get_balance_sheets: {e}")
+            print(traceback.format_exc())
             raise HttpError(500, "Lỗi hệ thống, vui lòng thử lại sau.")

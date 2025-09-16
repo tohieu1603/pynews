@@ -6,7 +6,6 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 import time
 from django.db import transaction
-
 from apps.calculate.services.financial_service import CalculateService
 from apps.calculate.services.query_financial_service import QueryFinancialService
 from apps.calculate.dtos.cash_flow_dto import CashFlowOut

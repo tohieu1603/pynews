@@ -72,8 +72,7 @@ def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
 
 def upsert_events(company: Company, rows: Iterable[Dict]) -> None:
     """
-    ⚠ Model Events đang auto_now_add cho public_date/issue_date -> 
-    không set được ngày từ nguồn; nếu muốn, hãy sửa model (bỏ auto_now_add).
+    Upsert events với public_date và issue_date từ nguồn vnstock
     """
     for r in rows:
         Events.objects.update_or_create(
@@ -81,7 +80,8 @@ def upsert_events(company: Company, rows: Iterable[Dict]) -> None:
             company=company,
             defaults={
                 "source_url": r.get("source_url"),
-               
+                "public_date": r.get("public_date"),
+                "issue_date": r.get("issue_date"),
             }
         )
 def upsert_sub_company(rows: Optional[Iterable[Dict]], parent_company: Company) -> None:
