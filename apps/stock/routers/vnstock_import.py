@@ -73,11 +73,11 @@ def import_sub_companies_for_all_symbols(request):
     }
 
 @router.get("/symbols/{symbol}")
-def get_symbol_with_all_relations(request, symbol: str):
+def get_symbol_with_all_relations(request, symbol: int):
     """Lấy thông tin symbol với tất cả bảng liên quan: company, industries, shareholders, officers, events, sub_companies"""
     from apps.stock.services.symbol_service import SymbolService
     service = SymbolService()
-    return service.get_symbol_payload(symbol.upper())
+    return service.get_symbol_payload(symbol)
 
 
 @router.get("/symbols")

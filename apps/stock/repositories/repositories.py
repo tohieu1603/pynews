@@ -117,10 +117,10 @@ def qs_companies_with_related() -> QuerySet[Company]:
         .only("id", "company_name")
     )
 
-def qs_symbol_by_name(symbol: str):
+def qs_symbol_by_name(symbol: int):
     
     return (
-        Symbol.objects.filter(name=symbol)
+        Symbol.objects.filter(id=symbol)
         .select_related("company")
         .prefetch_related(
             "industries",

@@ -202,7 +202,7 @@ class SymbolService:
             )
             for s in symbols
         ]
-    def get_symbol_payload(self, symbol: str) -> Dict[str, Any]:
+    def get_symbol_payload(self, symbol: int) -> Dict[str, Any]:
         sym: Symbol = get_object_or_404(repo.qs_symbol_by_name(symbol))
         c = sym.company
 
@@ -221,7 +221,7 @@ class SymbolService:
             print(f"Error accessing industries for symbol {symbol}: {e}")
             try:
                 from apps.stock.models import Industry
-                symbol_industries = Industry.objects.filter(symbols=sym)
+                symbol_industries = Industry.objects.filter(id = symbol)
                 industries = [
                     {
                         "id": ind.id,
