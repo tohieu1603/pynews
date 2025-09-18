@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "apps.stock.apps.StockConfig",
     "apps.account",
     "apps.calculate",
+    "apps.seapay",
     "core",
 ]
 
