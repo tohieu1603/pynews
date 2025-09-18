@@ -1,317 +1,385 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
+
+import jwt
+import requests
+from django.conf import settings
+from django.contrib.auth import authenticate, get_user_model
 from ninja import Router
 from ninja.responses import Response
-from pydantic import BaseModel
-from django.contrib.auth import authenticate, get_user_model
-from django.conf import settings
-from urllib.parse import urlencode
-import requests
-from typing import List
-from .models import SocialAccount
+from pydantic import BaseModel, Field, validator
+
 from core.jwt_auth import cookie_or_bearer_jwt_auth
-import jwt
+from .models import SocialAccount
 
 User = get_user_model()
-router = Router()
 
-# Pydantic schemas
+router = Router(tags=["auth"])
+
+# --- Constants -----------------------------------------------------------------
+
+AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
+TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo"
+DEFAULT_SCOPES = "openid email profile"
+HTTP_TIMEOUT = 10  # seconds
+
+
+# --- Exceptions ----------------------------------------------------------------
+
+class GoogleOAuthError(Exception):
+    """Base exception for Google OAuth flow."""
+
+
+class GoogleTokenExchangeError(GoogleOAuthError):
+    """Raised when exchanging code for tokens fails."""
+
+
+class GoogleIdTokenError(GoogleOAuthError):
+    """Raised when verifying Google ID token fails."""
+
+
+# --- Dataclasses ----------------------------------------------------------------
+
+@dataclass
+class GoogleOAuthConfig:
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+    scopes: str = DEFAULT_SCOPES
+    prompt: str = "consent"
+    access_type: str = "offline"
+    include_granted_scopes: str = "true"
+
+    @property
+    def audience_list(self) -> List[str]:
+        return [c.strip() for c in self.client_id.split(",") if c.strip()]
+
+
+@dataclass
+class GoogleProfile:
+    sub: str
+    email: Optional[str]
+    name: Optional[str]
+    given_name: Optional[str]
+    family_name: Optional[str]
+    picture: Optional[str]
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GoogleProfile":
+        sub = data.get("sub") or data.get("id")
+        if not sub:
+            raise GoogleOAuthError("Google profile missing 'sub' identifier")
+        return cls(
+            sub=str(sub),
+            email=data.get("email"),
+            name=data.get("name"),
+            given_name=data.get("given_name"),
+            family_name=data.get("family_name"),
+            picture=data.get("picture"),
+        )
+
+
+# --- Helper utilities ----------------------------------------------------------
+
+def _require_setting(name: str) -> str:
+    value = getattr(settings, name, None)
+    if not value:
+        raise GoogleOAuthError(f"Missing Google OAuth setting: {name}")
+    return value
+
+
+def _load_oauth_config() -> GoogleOAuthConfig:
+    return GoogleOAuthConfig(
+        client_id=_require_setting("GOOGLE_CLIENT_ID"),
+        client_secret=_require_setting("GOOGLE_CLIENT_SECRET"),
+        redirect_uri=_require_setting("GOOGLE_REDIRECT_URI"),
+        scopes=getattr(settings, "GOOGLE_SCOPES", DEFAULT_SCOPES) or DEFAULT_SCOPES,
+    )
+
+
+def _http_get(url: str, *, params: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    response = requests.get(url, params=params, headers=headers, timeout=HTTP_TIMEOUT)
+    if response.status_code != 200:
+        raise GoogleOAuthError(f"Google API GET {url} failed: {response.status_code}")
+    return response.json()
+
+
+def _http_post(url: str, *, data: Dict[str, Any]) -> Dict[str, Any]:
+    response = requests.post(url, data=data, timeout=HTTP_TIMEOUT)
+    if response.status_code != 200:
+        detail = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
+        raise GoogleTokenExchangeError(f"Google token endpoint error: {detail}")
+    return response.json()
+
+
+def _create_or_link_user(profile: GoogleProfile) -> User:
+    linked = SocialAccount.objects.select_related("user").filter(
+        provider=SocialAccount.PROVIDER_GOOGLE,
+        sub=profile.sub,
+    ).first()
+    if linked:
+        user = linked.user
+    else:
+        user = None
+        if profile.email:
+            user = User.objects.filter(email__iexact=profile.email).first()
+        if not user:
+            username = profile.email or f"google_{profile.sub}"
+            user = User.objects.create_user(username=username, email=profile.email)
+        SocialAccount.objects.update_or_create(
+            provider=SocialAccount.PROVIDER_GOOGLE,
+            sub=profile.sub,
+            defaults={"user": user, "email": profile.email},
+        )
+
+    changed = False
+    if hasattr(user, "first_name") and profile.given_name and not user.first_name:
+        user.first_name = profile.given_name
+        changed = True
+    if hasattr(user, "last_name") and profile.family_name and not user.last_name:
+        user.last_name = profile.family_name
+        changed = True
+    if changed:
+        user.save(update_fields=["first_name", "last_name"])
+    return user
+
+
+def _issue_jwt_pair(user: User) -> Dict[str, str]:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    access_payload = {
+        "user_id": user.id,
+        "email": user.email,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.JWT_ACCESS_TTL_MIN),
+        "type": "access",
+    }
+    refresh_payload = {
+        "user_id": user.id,
+        "iat": now,
+        "exp": now + timedelta(days=settings.JWT_REFRESH_TTL_DAYS),
+        "type": "refresh",
+    }
+
+    access_token = jwt.encode(access_payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    refresh_token = jwt.encode(refresh_payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return {"access_token": access_token, "refresh_token": refresh_token}
+
+
+def _serialize_user(user: User) -> Dict[str, Any]:
+    return {
+        "id": user.id,
+        "email": getattr(user, "email", None),
+        "username": getattr(user, "username", None),
+        "first_name": getattr(user, "first_name", None),
+        "last_name": getattr(user, "last_name", None),
+    }
+
+
+def _build_error(message: str, status: int = 400, *, detail: Optional[Any] = None) -> Response:
+    payload: Dict[str, Any] = {"error": message}
+    if detail is not None:
+        payload["detail"] = detail
+    return Response(payload, status=status)
+
+
+# --- Schemas --------------------------------------------------------------------
+
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., description="User email")
+    password: str = Field(..., description="User password")
+
 
 class GoogleLoginRequest(BaseModel):
-    code: str
+    code: str = Field(..., description="Authorization code returned by Google")
+    redirect_uri: Optional[str] = Field(None, description="Override redirect_uri if needed")
+    code_verifier: Optional[str] = Field(None, description="PKCE code_verifier when using PKCE")
+
 
 class GoogleIdTokenRequest(BaseModel):
-    id_token: str
+    id_token: str = Field(..., description="ID token issued by Google")
+
+    @validator("id_token")
+    def _trim(cls, value: str) -> str:
+        return value.strip()
+
+
+class UserPayload(BaseModel):
+    id: int
+    email: Optional[str]
+    username: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
-    user: dict
+    user: UserPayload
 
-class MessageResponse(BaseModel):
-    message: str
 
 class GoogleAuthUrlResponse(BaseModel):
     auth_url: str
 
-# Helper functions
-def create_jwt_token(user) -> dict:
-    """Create JWT access and refresh tokens for a user"""
-    from datetime import datetime, timedelta, timezone
-    
-    access_payload = {
-        'user_id': user.id,
-        'email': user.email,
-        'exp': datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_ACCESS_TTL_MIN),
-        'iat': datetime.now(timezone.utc),
-        'type': 'access'
-    }
-    
-    refresh_payload = {
-        'user_id': user.id,
-        'exp': datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TTL_DAYS),
-        'iat': datetime.now(timezone.utc),
-        'type': 'refresh'
-    }
-    
-    access_token = jwt.encode(access_payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
-    refresh_token = jwt.encode(refresh_payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
-    
-    return {
-        'access_token': access_token,
-        'refresh_token': refresh_token
-    }
 
-def get_user_info_from_google(access_token: str) -> dict:
-    """Get user information from Google using access token"""
-    headers = {'Authorization': f'Bearer {access_token}'}
-    response = requests.get('https://www.googleapis.com/oauth2/v2/userinfo', headers=headers)
-    
-    if response.status_code != 200:
-        raise ValueError("Failed to get user info from Google")
-    
-    return response.json()
+class MessageResponse(BaseModel):
+    message: str
 
-def create_or_get_user_from_google(google_user_info: dict):
-    """Create or get user from Google user information"""
-    email = google_user_info.get('email')
-    name = google_user_info.get('name', '')
-    given_name = google_user_info.get('given_name')
-    family_name = google_user_info.get('family_name')
-    sub = google_user_info.get('sub') or google_user_info.get('id')
-    
-    if sub:
-        linked = SocialAccount.objects.select_related('user').filter(
-            provider=SocialAccount.PROVIDER_GOOGLE, sub=str(sub)
-        ).first()
-        if linked:
-            user = linked.user
-        else:
-            user = User.objects.filter(email=email).first()
-            if not user:
-                user = User.objects.create_user(
-                    username=email or f"gg_{sub}",
-                    email=email,
-                )
-            SocialAccount.objects.get_or_create(
-                provider=SocialAccount.PROVIDER_GOOGLE,
-                sub=str(sub),
-                defaults={"email": email or None, "user": user},
-            )
-    else:
-        user = User.objects.filter(email=email).first()
-        if not user:
-            user = User.objects.create_user(
-                username=email,
-                email=email,
-            )
-    
-    changed = False
-    if hasattr(user, 'first_name') and (given_name or name) and not user.first_name:
-        user.first_name = given_name or name
-        changed = True
-    if hasattr(user, 'last_name') and family_name and not user.last_name:
-        user.last_name = family_name
-        changed = True
-    if changed:
-        user.save()
-    return user
+
+# --- Google OAuth Service -------------------------------------------------------
+
+class GoogleOAuthService:
+    def __init__(self, config: GoogleOAuthConfig):
+        self.config = config
+
+    def build_authorization_url(self, *, state: Optional[str] = None, include_prompt: bool = True) -> str:
+        params: Dict[str, Any] = {
+            "client_id": self.config.client_id,
+            "redirect_uri": self.config.redirect_uri,
+            "response_type": "code",
+            "scope": self.config.scopes,
+            "access_type": self.config.access_type,
+            "include_granted_scopes": self.config.include_granted_scopes,
+        }
+        if include_prompt and self.config.prompt:
+            params["prompt"] = self.config.prompt
+        if state:
+            params["state"] = state
+        return f"{AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
+
+    def exchange_code(self, request: GoogleLoginRequest) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "code": request.code,
+            "client_id": self.config.client_id,
+            "client_secret": self.config.client_secret,
+            "redirect_uri": request.redirect_uri or self.config.redirect_uri,
+            "grant_type": "authorization_code",
+        }
+        if request.code_verifier:
+            data["code_verifier"] = request.code_verifier
+        return _http_post(TOKEN_ENDPOINT, data=data)
+
+    def fetch_profile_from_access_token(self, access_token: str) -> GoogleProfile:
+        payload = _http_get(USERINFO_ENDPOINT, headers={"Authorization": f"Bearer {access_token}"})
+        return GoogleProfile.from_dict(payload)
+
+    def verify_id_token(self, id_token: str) -> GoogleProfile:
+        audiences = self.config.audience_list
+        if not audiences:
+            raise GoogleIdTokenError("Invalid GOOGLE_CLIENT_ID configuration")
+
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+
+            req = google_requests.Request()
+            last_error: Optional[Exception] = None
+            payload: Optional[Dict[str, Any]] = None
+            for aud in audiences:
+                try:
+                    payload = google_id_token.verify_oauth2_token(id_token, req, aud)
+                    if payload:
+                        break
+                except Exception as exc:  # noqa: PERF203
+                    last_error = exc
+                    continue
+            if not payload:
+                raise GoogleIdTokenError(str(last_error) if last_error else "Unable to verify ID token")
+            if payload.get("aud") not in audiences:
+                raise GoogleIdTokenError("ID token audience is not allowed")
+            return GoogleProfile.from_dict(payload)
+        except ImportError:
+            token_info = _http_get(TOKENINFO_ENDPOINT, params={"id_token": id_token})
+            if token_info.get("aud") not in audiences:
+                raise GoogleIdTokenError("ID token audience is not allowed")
+            return GoogleProfile.from_dict(token_info)
+
+
+# --- Endpoint Implementations ---------------------------------------------------
+
+
+def _google_service() -> GoogleOAuthService:
+    return GoogleOAuthService(_load_oauth_config())
+
 
 @router.get("/google/auth-url", response=GoogleAuthUrlResponse)
-def get_google_auth_url(request):
-    """Get Google OAuth authorization URL"""
-    params = {
-        'client_id': settings.GOOGLE_CLIENT_ID,
-        'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-        'scope': 'openid email profile',
-        'response_type': 'code',
-        'access_type': 'offline',
-        'prompt': 'consent'
-    }
-    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    
-    return {"auth_url": auth_url}
+def google_auth_url(request, state: Optional[str] = None):
+    try:
+        service = _google_service()
+        url = service.build_authorization_url(state=state)
+        return GoogleAuthUrlResponse(auth_url=url)
+    except GoogleOAuthError as exc:
+        return _build_error(str(exc), status=500)
+
 
 @router.post("/google/login", response=TokenResponse)
 def google_login(request, payload: GoogleLoginRequest):
-    """Login with Google OAuth code"""
     try:
-        token_url = 'https://oauth2.googleapis.com/token'
-        token_data = {
-            'client_id': settings.GOOGLE_CLIENT_ID,
-            'client_secret': settings.GOOGLE_CLIENT_SECRET,
-            'code': payload.code,
-            'grant_type': 'authorization_code',
-            'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-        }
-        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-        try:
-            import base64
-            cid = settings.GOOGLE_CLIENT_ID or ""
-            csec = settings.GOOGLE_CLIENT_SECRET or ""
-            basic = base64.b64encode(f"{cid}:{csec}".encode()).decode()
-            headers['Authorization'] = f"Basic {basic}"
-        except Exception:
-            pass
+        service = _google_service()
+        token_payload = service.exchange_code(payload)
+        access_token = token_payload.get("access_token")
+        if not access_token:
+            raise GoogleTokenExchangeError("Google did not return an access_token")
 
-        token_response = requests.post(token_url, data=token_data, headers=headers, timeout=15)
-        token_json = token_response.json()
-        
-        if 'access_token' not in token_json:
-            debug = {
-                "endpoint": token_url,
-                "status_code": token_response.status_code,
-                "details": token_json,
-                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
-                "client_id_suffix": (settings.GOOGLE_CLIENT_ID or "")[::-1][:16][::-1],
-            }
-            return Response({"error": "Failed to get access token from Google", **debug}, status=400)
-        
-        google_user_info = get_user_info_from_google(token_json['access_token'])
-        
-        user = create_or_get_user_from_google(google_user_info)
-        
-        # Create JWT tokens
-        tokens = create_jwt_token(user)
-        
+        profile = service.fetch_profile_from_access_token(access_token)
+        user = _create_or_link_user(profile)
+        tokens = _issue_jwt_pair(user)
         return TokenResponse(
-            access_token=tokens['access_token'],
-            refresh_token=tokens['refresh_token'],
-            user={
-                'id': user.id,
-                'email': user.email,
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name
-            }
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            user=UserPayload(**_serialize_user(user)),
         )
-        
-    except Exception as e:
-        return Response(
-            {"error": f"Google login failed: {str(e)}"}, 
-            status=400
-        )
-
-
-def _client_ids() -> List[str]:
-    val = getattr(settings, 'GOOGLE_CLIENT_ID', None)
-    if not val:
-        return []
-    return [c.strip() for c in str(val).split(',') if c.strip()]
+    except GoogleOAuthError as exc:
+        return _build_error(str(exc), status=400)
+    except Exception as exc:
+        return _build_error("Google sign-in failed", status=400, detail=str(exc))
 
 
 @router.post("/google/login-id-token", response=TokenResponse)
 def google_login_id_token(request, payload: GoogleIdTokenRequest):
-    """Login with Google ID token (verify locally, no token exchange).
-    """
     try:
-        try:
-            from google.oauth2 import id_token as g_id_token
-            from google.auth.transport import requests as g_requests
-        except Exception as exc: 
-            return Response({
-                "error": "Missing dependency 'google-auth'",
-                "hint": "pip install google-auth"
-            }, status=500)
-
-        client_ids = _client_ids()
-        if not client_ids:
-            return Response({"error": "GOOGLE_CLIENT_ID is not configured"}, status=500)
-
-        req = g_requests.Request()
-        idinfo = None
-        last_exc = None
-        for aud in client_ids:
-            try:
-                idinfo = g_id_token.verify_oauth2_token(payload.id_token, req, aud)
-                if idinfo:
-                    break
-            except Exception as ve:
-                last_exc = ve
-                continue
-        if not idinfo:
-            msg = str(last_exc) if last_exc else "Invalid Google ID token"
-            return Response({"error": msg}, status=400)
-
-        google_user_info = {
-            'sub': idinfo.get('sub'),
-            'email': idinfo.get('email'),
-            'name': idinfo.get('name'),
-            'given_name': idinfo.get('given_name'),
-            'family_name': idinfo.get('family_name'),
-            'picture': idinfo.get('picture'),
-        }
-        user = create_or_get_user_from_google(google_user_info)
-
-        tokens = create_jwt_token(user)
+        service = _google_service()
+        profile = service.verify_id_token(payload.id_token)
+        user = _create_or_link_user(profile)
+        tokens = _issue_jwt_pair(user)
         return TokenResponse(
-            access_token=tokens['access_token'],
-            refresh_token=tokens['refresh_token'],
-            user={
-                'id': user.id,
-                'email': user.email,
-                'username': user.username,
-                'first_name': getattr(user, 'first_name', None),
-                'last_name': getattr(user, 'last_name', None),
-            }
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            user=UserPayload(**_serialize_user(user)),
         )
-    except Exception as e:
-        return Response({"error": f"Google ID token login failed: {e}"}, status=400)
+    except GoogleIdTokenError as exc:
+        return _build_error(str(exc), status=400)
+    except GoogleOAuthError as exc:
+        return _build_error(str(exc), status=400)
+    except Exception as exc:
+        return _build_error("Google ID token sign-in failed", status=400, detail=str(exc))
+
 
 @router.post("/login", response=TokenResponse)
 def login(request, payload: LoginRequest):
+    user = authenticate(username=payload.email, password=payload.password)
+    if not user:
+        return _build_error("Invalid email or password", status=401)
+    if not user.is_active:
+        return _build_error("Account has been disabled", status=401)
 
-    try:
-        user = authenticate(username=payload.email, password=payload.password)
-        
-        if not user:
-            return Response(
-                {"error": "Invalid email or password"}, 
-                status=401
-            )
-        
-        if not user.is_active:
-            return Response(
-                {"error": "Account is disabled"}, 
-                status=401
-            )
-        
-        # Create JWT tokens
-        tokens = create_jwt_token(user)
-        
-        return TokenResponse(
-            access_token=tokens['access_token'],
-            refresh_token=tokens['refresh_token'],
-            user={
-                'id': user.id,
-                'email': user.email,
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name
-            }
-        )
-        
-    except Exception as e:
-        return Response(
-            {"error": f"Login failed: {str(e)}"}, 
-            status=400
-        )
+    tokens = _issue_jwt_pair(user)
+    return TokenResponse(
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        user=UserPayload(**_serialize_user(user)),
+    )
+
 
 @router.get("/profile", auth=cookie_or_bearer_jwt_auth)
 def get_profile(request):
-    """Get current user profile (requires authentication)"""
     try:
-        return {
-            'id': request.auth.id,
-            'email': request.auth.email,
-            'username': request.auth.username,
-            'first_name': request.auth.first_name,
-            'last_name': request.auth.last_name,
-            'date_joined': request.auth.date_joined
-        }
-    except Exception as e:
-        return Response(
-            {"error": f"Failed to get profile: {str(e)}"}, 
-            status=400
-        )
+        return _serialize_user(request.auth)
+    except Exception as exc:
+        return _build_error("Failed to load user profile", status=400, detail=str(exc))

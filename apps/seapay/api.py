@@ -6,7 +6,7 @@ from django.db import transaction
 from decimal import Decimal
 from apps.seapay.utils.signature import verify_signature
 router = Router()
-
+import json
 class CreateOrderIn(Schema):
     order_id: str
     amount: Decimal
@@ -62,16 +62,12 @@ def create_order(request, data: CreateOrderIn):
 
 @router.post("/callback")
 def seapay_callback(request: HttpRequest):
-    print(request.body)
+   
     try:
-        data = request.json()
-        
+        data = data = json.loads(request.body)
+        print("Callback data:", data)
     except Exception:
         raise HttpError(400, "Invalid JSON")
-
-    # 1. Verify signature
-    if not verify_signature(data.copy()):  # dùng copy vì pop
-        raise HttpError(403, "Invalid signature")
 
     order_id = data.get("order_id")
     status = data.get("status")

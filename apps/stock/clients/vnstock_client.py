@@ -1,9 +1,10 @@
-import time
+﻿import time
 from typing import Dict, Generator, Optional, Tuple
 
 import pandas as pd
 from vnstock import Company as VNCompany
 from vnstock import Listing
+from vnstock.explorer.vci.company import Company as VCIExplorerCompany
 
 
 class VNStockClient:
@@ -23,6 +24,67 @@ class VNStockClient:
         if df is None:
             return pd.DataFrame()
         return df
+
+    def _normalize_shareholder_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        df = df.copy()
+        rename_map = {}
+        if "owner_full_name" in df.columns and "share_holder" not in df.columns:
+            rename_map["owner_full_name"] = "share_holder"
+        if "percentage" in df.columns and "share_own_percent" not in df.columns:
+            rename_map["percentage"] = "share_own_percent"
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        drop_cols = [col for col in ("__typename", "ticker", "en__owner_full_name") if col in df.columns]
+        if drop_cols:
+            df = df.drop(columns=drop_cols)
+
+        if "update_date" in df.columns:
+            df["update_date"] = pd.to_datetime(df["update_date"], errors="coerce")
+            df["update_date"] = df["update_date"].dt.strftime("%Y-%m-%d")
+
+        for col in ("share_holder", "share_own_percent", "quantity", "update_date"):
+            if col not in df.columns:
+                df[col] = None
+
+        return df[["share_holder", "quantity", "share_own_percent", "update_date"]]
+
+    def _fetch_vci_shareholders_direct(self, symbol: str) -> pd.DataFrame:
+        try:
+            explorer = VCIExplorerCompany(symbol=symbol, random_agent=False, to_df=True, show_log=False)
+            df = explorer._process_data(explorer.raw_data, "OrganizationShareHolders")
+        except Exception as exc:
+            print(f"Error fetching VCI shareholders for {symbol}: {exc}")
+            return pd.DataFrame()
+
+        return self._normalize_shareholder_df(df)
+
+    def _fetch_shareholders(self, symbol: str, *companies: VNCompany) -> pd.DataFrame:
+        direct_df = self._fetch_vci_shareholders_direct(symbol)
+        if not direct_df.empty:
+            return direct_df
+
+        for company in companies:
+            if company is None:
+                continue
+            try:
+                df = company.shareholders()
+            except SystemExit:
+                raise
+            except NotImplementedError:
+                continue
+            except Exception as exc:
+                print(f"Error fetching shareholders from provider for {symbol}: {exc}")
+                continue
+
+            normalized = self._normalize_shareholder_df(self._df_or_empty(df))
+            if not normalized.empty:
+                return normalized
+
+        return pd.DataFrame()
 
     def iter_all_symbols(
         self, exchange: Optional[str] = "HSX"
@@ -56,9 +118,7 @@ class VNStockClient:
                     "overview_df_TCBS": self._df_or_empty(vn_company_tcbs.overview()),
                     "overview_df_VCI": self._df_or_empty(vn_company_vci.overview()),
                     "profile_df": self._df_or_empty(vn_company_tcbs.profile()),
-                    "shareholders_df": self._df_or_empty(
-                        vn_company_vci.shareholders()
-                    ),
+                    "shareholders_df": self._fetch_shareholders(symbol, vn_company_vci, vn_company_tcbs),
                     "industries_icb_df": listing.industries_icb(),
                     "symbols_by_industries_df": listing.symbols_by_industries(),
                     "news_df": self._df_or_empty(vn_company_tcbs.news()),
@@ -118,10 +178,7 @@ class VNStockClient:
                     overview_vci = self._df_or_empty(vn_company_vci.overview())
                 except Exception:
                     overview_vci = pd.DataFrame()
-                try:
-                    shareholders_df = self._df_or_empty(vn_company_vci.shareholders())
-                except Exception:
-                    shareholders_df = pd.DataFrame()
+                shareholders_df = self._fetch_shareholders(symbol, vn_company_vci, vn_company_tcbs)
                 try:
                     officers_df = self._df_or_empty(vn_company_vci.officers())
                 except Exception:
@@ -168,3 +225,4 @@ class VNStockClient:
                 return {}, False
 
         return {}, False
+

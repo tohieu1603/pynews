@@ -1,27 +1,29 @@
-# apps/stock/services/fetch_service.py
+﻿# apps/stock/services/fetch_service.py
 import time
 from typing import Dict, List, Optional
 import pandas as pd
 from vnstock import Company as VNCompany
+from apps.stock.clients.vnstock_client import VNStockClient
 
 
 class FetchService:
     """Class chuyên fetch data từ external APIs"""
     
-    def __init__(self, max_retries: int = 5, wait_seconds: int = 60):
+    def __init__(self, max_retries: int = 5, wait_seconds: int = 60, vn_client: Optional[VNStockClient] = None):
         self.max_retries = max_retries
         self.wait_seconds = wait_seconds
+        self.vn_client = vn_client or VNStockClient(max_retries=max_retries, wait_seconds=wait_seconds)
     
     def fetch_shareholders_df(self, symbol_name: str) -> pd.DataFrame:
         """Fetch shareholders DataFrame with retry/backoff."""
         retries = 0
         while retries <= self.max_retries:
             try:
-                vn_company = VNCompany(symbol=symbol_name, source="VCI")
-                df: Optional[pd.DataFrame] = vn_company.shareholders()
-                return df if df is not None else pd.DataFrame()
+                df = self.vn_client.get_shareholders_df(symbol_name)
+                if df is not None and not df.empty:
+                    return df
+                return pd.DataFrame()
             except SystemExit:
-                # Rate limited; backoff and retry
                 retries += 1
                 print(
                     f"Rate limit when fetching shareholders for {symbol_name}. "

@@ -2,9 +2,9 @@ import time
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from django.db import transaction
-from vnstock import Listing, Company, Finance
+from vnstock import Listing, Company
 
-from apps.stock.models import Symbol, Company as CompanyModel, Industry, ShareHolder, Officers, Events, SubCompany
+from apps.stock.models import Symbol
 from apps.stock.repositories import repositories as repo
 from apps.stock.utils.safe import safe_decimal, safe_int, safe_str, to_datetime
 
@@ -295,7 +295,7 @@ class VnstockImportService:
                 'issue_share': safe_int(overview_data.get("issue_share")),
                 'financial_ratio_issue_share': fin_ratio_share,
                 'charter_capital': charter_cap,
-                'outstanding_share': safe_int(overview_data.get("outstanding_shares", 0)),
+                'outstanding_share': safe_int(overview_data.get("outstanding_share", 0)),
                 'foreign_percent': safe_decimal(overview_data.get("foreign_percent", 0)),
                 'established_year': safe_int(overview_data.get("established_year", 0)),
                 'no_employees': safe_int(overview_data.get("no_employees", 0)),
@@ -549,10 +549,10 @@ class VnstockImportService:
         
         # Sử dụng VNStockClient để tăng tốc
         from apps.stock.clients.vnstock_client import VNStockClient
-        client = VNStockClient(max_retries=2, wait_seconds=30)  # Giảm retry time
+        client = VNStockClient(max_retries=2, wait_seconds=30) 
         
         processed = 0
-        batch_size = 10  # Process theo batch để giảm memory
+        batch_size = 10 
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -560,16 +560,17 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với shareholders - safe API call
-                    symbol_name = symbol.name  # Capture for lambda
-                    bundle = self._safe_api_call(
-                        lambda s=symbol_name: client.fetch_company_bundle_safe(s)[0]
-                    )
-                    if not bundle:
-                        continue
+                    symbol_name = symbol.name  
                     
-                    shareholders_df = bundle.get("shareholders_df")
+                    company_client = Company(symbol=symbol.name, source="VCI")
+                    shareholders_df = company_client.shareholders()
+                    if (shareholders_df is None or shareholders_df.empty) and symbol.name:
+
+                        company_client_vci = Company(symbol=symbol.name, source="TCBS")
+                        shareholders_df = company_client_vci.shareholders()
+                    
                     if shareholders_df is None or shareholders_df.empty:
+                        print(f"No shareholders data for {symbol.name}")
                         continue
                     
                     # Map shareholders data
