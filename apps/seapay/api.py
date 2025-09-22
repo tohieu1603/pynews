@@ -3,12 +3,13 @@ from ninja import Router
 from ninja.errors import HttpError
 from django.http import HttpRequest
 from django.utils import timezone
-from typing import Optional
+from typing import Optional, List
 from decimal import Decimal
 from core.jwt_auth import JWTAuth
 
 from apps.seapay.services.payment_service import PaymentService
 from apps.seapay.services.wallet_topup_service import WalletTopupService
+from apps.seapay.services.symbol_purchase_service import SymbolPurchaseService
 from apps.seapay.schemas import (
     CreatePaymentIntentRequest,
     CreatePaymentIntentResponse,
@@ -26,12 +27,22 @@ from apps.seapay.schemas import (
     CreateWalletTopupResponse,
     WalletTopupStatusResponse,
     SepayWebhookRequest,
-    SepayWebhookResponse
+    SepayWebhookResponse,
+    # Symbol purchase schemas
+    CreateSymbolOrderRequest,
+    CreateSymbolOrderResponse,
+    ProcessWalletPaymentResponse,
+    CreateSepayPaymentResponse,
+    SymbolAccessCheckResponse,
+    UserSymbolLicenseResponse,
+    SymbolOrderHistoryResponse,
+    PaginatedSymbolOrderHistory
 )
 
 router = Router()
 payment_service = PaymentService()
 topup_service = WalletTopupService()
+symbol_purchase_service = SymbolPurchaseService()
 
 
 @router.post("/create-intent", response=CreatePaymentIntentResponse, auth=JWTAuth())
@@ -404,4 +415,180 @@ def handle_sepay_webhook(request: HttpRequest, data: SepayWebhookRequest):
             payment_id=None,
             processed_at=timezone.now().isoformat()
         )
+
+
+# ============================================================================
+# BOT PURCHASE ENDPOINTS
+# ============================================================================
+
+@router.post("/symbol/order/create", response=CreateSymbolOrderResponse, auth=JWTAuth())
+def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
+    """
+    Tạo đơn hàng mua quyền truy cập symbol
+    
+    Luồng:
+    1. Validate items và tính tổng tiền
+    2. Tạo PaySymbolOrder và PaySymbolOrderItem
+    3. Trả về thông tin đơn hàng
+    """
+    try:
+        user = request.auth
+        
+        # Validate items
+        if not data.items:
+            raise HttpError(400, "Order must have at least one item")
+        
+        # Convert items to dict format
+        items = []
+        for item in data.items:
+            items.append({
+                'symbol_id': item.symbol_id,
+                'price': item.price,
+                'license_days': item.license_days,
+                'metadata': item.metadata or {}
+            })
+        
+        # Tạo order
+        order = symbol_purchase_service.create_symbol_order(
+            user=user,
+            items=items,
+            payment_method=data.payment_method,
+            description=data.description
+        )
+        
+        # Format response
+        order_items = []
+        for item in order.items.all():
+            order_items.append({
+                'symbol_id': item.symbol_id,
+                'price': item.price,
+                'license_days': item.license_days,
+                'metadata': item.metadata
+            })
+        
+        return CreateSymbolOrderResponse(
+            order_id=str(order.order_id),
+            total_amount=order.total_amount,
+            status=order.status,
+            payment_method=order.payment_method,
+            items=order_items,
+            created_at=order.created_at.isoformat(),
+            message=f"Order created successfully. Total: {order.total_amount} VND"
+        )
+        
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    except Exception as e:
+        raise HttpError(500, f"Failed to create order: {str(e)}")
+
+
+@router.post("/symbol/order/{order_id}/pay-wallet", response=ProcessWalletPaymentResponse, auth=JWTAuth())
+def pay_symbol_order_with_wallet(request: HttpRequest, order_id: str):
+    """
+    Thanh toán đơn hàng symbol bằng ví
+    
+    Luồng:
+    1. Kiểm tra order status = pending_payment
+    2. Kiểm tra số dư ví đủ không
+    3. Trừ tiền từ ví và ghi ledger
+    4. Cập nhật order status = paid
+    5. Tạo license cho user
+    """
+    try:
+        user = request.auth
+        
+        result = symbol_purchase_service.process_wallet_payment(order_id, user)
+        
+        return ProcessWalletPaymentResponse(**result)
+        
+    except ValueError as e:
+        raise HttpError(404, str(e))
+
+
+@router.post("/symbol/order/{order_id}/pay-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
+def create_sepay_payment(request: HttpRequest, order_id: str):
+    """
+    Tạo payment intent cho thanh toán SePay cho đơn hàng symbol
+    
+    Luồng:
+    1. Kiểm tra order
+    2. Tạo payment intent
+    3. Trả về QR code và thông tin thanh toán
+    """
+    try:
+        user = request.auth
+        
+        result = symbol_purchase_service.create_sepay_payment_intent(order_id, user)
+        
+        return CreateSepayPaymentResponse(**result)
+        
+    except ValueError as e:
+        raise HttpError(404, str(e))
+    except Exception as e:
+        raise HttpError(500, f"Failed to create payment intent: {str(e)}")
+
+
+@router.get("/symbol/{symbol_id}/access", response=SymbolAccessCheckResponse, auth=JWTAuth())
+def check_symbol_access(request: HttpRequest, symbol_id: int):
+    """
+    Kiểm tra user có quyền truy cập symbol không
+    
+    Returns:
+        Thông tin license và quyền truy cập
+    """
+    try:
+        user = request.auth
+        
+        result = symbol_purchase_service.check_symbol_access(user, symbol_id)
+        
+        return SymbolAccessCheckResponse(**result)
+        
+    except Exception as e:
+        raise HttpError(500, f"Failed to check access: {str(e)}")
+
+
+@router.get("/symbol/licenses", response=List[UserSymbolLicenseResponse], auth=JWTAuth())
+def get_user_symbol_licenses(request: HttpRequest, page: int = 1, limit: int = 20):
+    """
+    Lấy tất cả licenses của user
+    
+    Returns:
+        List các symbol license
+    """
+    try:
+        user = request.auth
+        
+        licenses_data = symbol_purchase_service.get_user_symbol_licenses(user, page, limit)
+        
+        return [UserSymbolLicenseResponse(**license) for license in licenses_data['results']]
+        
+    except Exception as e:
+        raise HttpError(500, f"Failed to get licenses: {str(e)}")
+
+
+@router.get("/symbol/orders/history", response=PaginatedSymbolOrderHistory, auth=JWTAuth())
+def get_order_history(request: HttpRequest, page: int = 1, limit: int = 20):
+    """
+    Lấy lịch sử mua symbol của user
+    
+    Returns:
+        Paginated order history
+    """
+    try:
+        user = request.auth
+        
+        # Validate pagination
+        if limit > 100:
+            limit = 100
+        if limit <= 0:
+            limit = 20
+        if page <= 0:
+            page = 1
+        
+        orders_data = symbol_purchase_service.get_order_history(user, page, limit)
+        
+        return PaginatedSymbolOrderHistory(**orders_data)
+        
+    except Exception as e:
+        raise HttpError(500, f"Failed to get order history: {str(e)}")
 

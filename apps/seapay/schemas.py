@@ -182,3 +182,94 @@ class SepayWebhookResponse(Schema):
     message: str
     payment_id: Optional[str] = None
     processed_at: str
+
+
+# ============================================================================
+# SYMBOL PURCHASE SCHEMAS
+# ============================================================================
+
+class SymbolOrderItemRequest(Schema):
+    symbol_id: int
+    price: Decimal
+    license_days: Optional[int] = None
+    metadata: Optional[dict] = {}
+
+
+class CreateSymbolOrderRequest(Schema):
+    items: List[SymbolOrderItemRequest]
+    payment_method: str = "wallet"  # wallet | sepay_transfer
+    description: Optional[str] = ""
+
+
+class SymbolOrderItemResponse(Schema):
+    symbol_id: int
+    price: Decimal
+    license_days: Optional[int]
+    metadata: dict
+
+
+class CreateSymbolOrderResponse(Schema):
+    order_id: str
+    total_amount: Decimal
+    status: str
+    payment_method: str
+    items: List[SymbolOrderItemResponse]
+    created_at: str
+    message: str
+
+
+class ProcessWalletPaymentResponse(Schema):
+    success: bool
+    message: str
+    order_id: str
+    amount_charged: Decimal
+    wallet_balance_after: Decimal
+    licenses_created: int
+
+
+class CreateSepayPaymentResponse(Schema):
+    intent_id: str
+    order_code: str
+    amount: Decimal
+    currency: str
+    expires_at: str
+    qr_code_url: str
+    message: str
+
+
+class SymbolAccessCheckResponse(Schema):
+    has_access: bool
+    license_id: Optional[str]
+    start_at: Optional[str]
+    end_at: Optional[str]
+    is_lifetime: bool
+    expires_soon: bool
+
+
+class UserSymbolLicenseResponse(Schema):
+    license_id: str
+    symbol_id: int
+    status: str
+    start_at: str
+    end_at: Optional[str]
+    is_lifetime: bool
+    is_active: bool
+    order_id: Optional[str]
+    created_at: str
+
+
+class SymbolOrderHistoryResponse(Schema):
+    order_id: str
+    total_amount: Decimal
+    status: str
+    payment_method: str
+    description: str
+    created_at: str
+    items: List[SymbolOrderItemResponse]
+
+
+class PaginatedSymbolOrderHistory(Schema):
+    results: List[SymbolOrderHistoryResponse]
+    total: int
+    page: int
+    limit: int

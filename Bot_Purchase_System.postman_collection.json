@@ -1,0 +1,848 @@
+{
+  "info": {
+    "name": "Bot Purchase System API",
+    "description": "Complete API collection for Bot Purchase System with Wallet and SePay payment methods",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": ""
+    },
+    {
+      "key": "order_id",
+      "value": ""
+    },
+    {
+      "key": "symbol_id",
+      "value": "123"
+    },
+    {
+      "key": "intent_id",
+      "value": ""
+    },
+    {
+      "key": "order_code",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global pre-request script",
+          "console.log('🚀 Starting request to:', pm.request.url);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test script",
+          "pm.test('Status code is success', function () {",
+          "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+          "});",
+          "",
+          "pm.test('Response time is less than 5000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('access_token', response.access_token);",
+                  "    pm.environment.set('user_id', response.user.id);",
+                  "    console.log('✅ Login successful');",
+                  "    console.log('👤 User ID:', response.user.id);",
+                  "    console.log('🔑 Token set successfully');",
+                  "} else {",
+                  "    console.log('❌ Login failed');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02. Wallet Management",
+      "item": [
+        {
+          "name": "Get Wallet Info",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('💰 Wallet Balance:', response.balance);",
+                  "    console.log('💳 Wallet ID:', response.wallet_id);",
+                  "    pm.environment.set('wallet_id', response.wallet_id);",
+                  "    ",
+                  "    pm.test('Wallet has positive balance', function() {",
+                  "        pm.expect(response.balance).to.be.above(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Wallet History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/wallet/history?page=1&limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "wallet",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03. Order Management",
+      "item": [
+        {
+          "name": "Create Order (Wallet Payment)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('order_id', response.order_id);",
+                  "    console.log('✅ Order created:', response.order_id);",
+                  "    console.log('💰 Total amount:', response.total_amount);",
+                  "    ",
+                  "    pm.test('Order created successfully', function() {",
+                  "        pm.expect(response.status).to.eql('pending_payment');",
+                  "        pm.expect(response.payment_method).to.eql('wallet');",
+                  "        pm.expect(response.total_amount).to.be.above(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"symbol_id\": {{symbol_id}},\n      \"price\": 500000,\n      \"license_days\": 30,\n      \"metadata\": {\n        \"version\": \"v2.0\",\n        \"package\": \"premium\"\n      }\n    }\n  ],\n  \"payment_method\": \"wallet\",\n  \"description\": \"Mua Bot Trading Scalping - Test\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Order (SePay Payment)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('order_id', response.order_id);",
+                  "    console.log('✅ Order created:', response.order_id);",
+                  "    console.log('💰 Total amount:', response.total_amount);",
+                  "    console.log('🏦 Payment method: SePay Transfer');",
+                  "    ",
+                  "    pm.test('Order created successfully', function() {",
+                  "        pm.expect(response.status).to.eql('pending_payment');",
+                  "        pm.expect(response.payment_method).to.eql('sepay_transfer');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"symbol_id\": {{symbol_id}},\n      \"price\": 1000000,\n      \"license_days\": null,\n      \"metadata\": {\n        \"version\": \"v3.0\",\n        \"package\": \"lifetime\"\n      }\n    }\n  ],\n  \"payment_method\": \"sepay_transfer\",\n  \"description\": \"Mua Bot Premium - Lifetime License\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Pay with Wallet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('✅ Payment successful');",
+                  "    console.log('💳 Amount charged:', response.amount_charged);",
+                  "    console.log('💰 Balance after:', response.wallet_balance_after);",
+                  "    console.log('🎫 Licenses created:', response.licenses_created);",
+                  "    ",
+                  "    pm.test('Payment processed successfully', function() {",
+                  "        pm.expect(response.success).to.be.true;",
+                  "        pm.expect(response.licenses_created).to.be.above(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/{{order_id}}/pay-wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "{{order_id}}",
+                "pay-wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Pay with SePay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('intent_id', response.intent_id);",
+                  "    pm.environment.set('order_code', response.order_code);",
+                  "    ",
+                  "    console.log('✅ Payment intent created');",
+                  "    console.log('🏦 Order code:', response.order_code);",
+                  "    console.log('📱 QR URL:', response.qr_code_url);",
+                  "    ",
+                  "    pm.globals.set('qr_url', response.qr_code_url);",
+                  "    ",
+                  "    pm.test('Payment intent created', function() {",
+                  "        pm.expect(response.intent_id).to.exist;",
+                  "        pm.expect(response.order_code).to.exist;",
+                  "        pm.expect(response.qr_code_url).to.exist;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/{{order_id}}/pay-sepay",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "{{order_id}}",
+                "pay-sepay"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Order History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/orders/history?page=1&limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "orders",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Multi-item Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('✅ Multi-item order created');",
+                  "    console.log('📦 Items count:', response.items.length);",
+                  "    console.log('💰 Total amount:', response.total_amount);",
+                  "    ",
+                  "    pm.test('Multi-item order created', function() {",
+                  "        pm.expect(response.items).to.have.lengthOf(3);",
+                  "        pm.expect(response.total_amount).to.eql(1800000);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"symbol_id\": 123,\n      \"price\": 500000,\n      \"license_days\": 30,\n      \"metadata\": {\"package\": \"basic\"}\n    },\n    {\n      \"symbol_id\": 124,\n      \"price\": 300000,\n      \"license_days\": 60,\n      \"metadata\": {\"package\": \"standard\"}\n    },\n    {\n      \"symbol_id\": 125,\n      \"price\": 1000000,\n      \"license_days\": null,\n      \"metadata\": {\"package\": \"lifetime\"}\n    }\n  ],\n  \"payment_method\": \"wallet\",\n  \"description\": \"Multi-bot purchase test\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "create"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04. License Management",
+      "item": [
+        {
+          "name": "Check Bot Access",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('🎫 Has access:', response.has_access);",
+                  "    console.log('📅 License expires:', response.end_at || 'Lifetime');",
+                  "    console.log('⚡ Is lifetime:', response.is_lifetime);",
+                  "    ",
+                  "    pm.test('Access check response valid', function() {",
+                  "        pm.expect(response.has_access).to.be.a('boolean');",
+                  "        pm.expect(response.is_lifetime).to.be.a('boolean');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/{{symbol_id}}/access",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "{{symbol_id}}",
+                "access"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User Licenses",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    console.log('🎫 Total licenses:', response.results.length);",
+                  "    ",
+                  "    response.results.forEach((license, index) => {",
+                  "        console.log(`License ${index + 1}: Symbol ${license.symbol_id}, Status: ${license.status}`);",
+                  "    });",
+                  "    ",
+                  "    pm.test('Licenses retrieved', function() {",
+                  "        pm.expect(response.results).to.be.an('array');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/licenses?page=1&limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "licenses"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05. Webhook Testing",
+      "item": [
+        {
+          "name": "SePay Callback Success",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    console.log('✅ Webhook processed successfully');",
+                  "    ",
+                  "    pm.test('Webhook processed', function() {",
+                  "        pm.expect(pm.response.code).to.eql(200);",
+                  "    });",
+                  "} else {",
+                  "    console.log('❌ Webhook processing failed');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 24088296,\n  \"gateway\": \"BIDV\",\n  \"transactionDate\": \"2025-09-22T10:30:00Z\",\n  \"accountNumber\": \"1160976779\",\n  \"subAccount\": \"96247CISI1\",\n  \"code\": null,\n  \"content\": \"{{order_code}}\",\n  \"transferType\": \"in\",\n  \"description\": \"BankAPINotify {{order_code}}\",\n  \"transferAmount\": 1000000,\n  \"referenceCode\": \"{{$randomUUID}}\",\n  \"accumulated\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/callback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "callback"
+              ]
+            }
+          }
+        },
+        {
+          "name": "SePay Callback Invalid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Invalid callback handled', function() {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404]);",
+                  "});",
+                  "",
+                  "console.log('❌ Invalid callback correctly rejected');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 99999999,\n  \"gateway\": \"BIDV\",\n  \"transactionDate\": \"2025-09-22T10:30:00Z\",\n  \"accountNumber\": \"1160976779\",\n  \"subAccount\": \"96247CISI1\",\n  \"code\": null,\n  \"content\": \"INVALID_ORDER_CODE_12345\",\n  \"transferType\": \"in\",\n  \"description\": \"BankAPINotify INVALID_ORDER_CODE_12345\",\n  \"transferAmount\": 1000000,\n  \"referenceCode\": \"{{$randomUUID}}\",\n  \"accumulated\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/callback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "callback"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06. Error Scenarios",
+      "item": [
+        {
+          "name": "Insufficient Balance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Insufficient balance error', function() {",
+                  "    pm.expect(pm.response.code).to.eql(400);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 400) {",
+                  "    console.log('✅ Insufficient balance correctly rejected');",
+                  "} else {",
+                  "    console.log('❌ Should have failed with insufficient balance');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"symbol_id\": {{symbol_id}},\n      \"price\": 999999999,\n      \"license_days\": 30\n    }\n  ],\n  \"payment_method\": \"wallet\",\n  \"description\": \"Test insufficient balance\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invalid Symbol ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Invalid symbol ID error', function() {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404]);",
+                  "});",
+                  "",
+                  "console.log('✅ Invalid symbol ID correctly rejected');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"symbol_id\": 999999,\n      \"price\": 500000,\n      \"license_days\": 30\n    }\n  ],\n  \"payment_method\": \"wallet\",\n  \"description\": \"Test invalid symbol\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Order Not Found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Order not found error', function() {",
+                  "    pm.expect(pm.response.code).to.eql(404);",
+                  "});",
+                  "",
+                  "console.log('✅ Order not found correctly handled');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/order/{{$randomUUID}}/pay-wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "order",
+                "{{$randomUUID}}",
+                "pay-wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unauthenticated Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Unauthenticated request rejected', function() {",
+                  "    pm.expect(pm.response.code).to.eql(401);",
+                  "});",
+                  "",
+                  "console.log('✅ Unauthenticated request correctly rejected');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/seapay/bot/licenses",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "seapay",
+                "bot",
+                "licenses"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

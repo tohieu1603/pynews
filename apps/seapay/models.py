@@ -19,6 +19,35 @@ class PaymentStatus(models.TextChoices):
     EXPIRED = 'expired', 'Expired'
 
 
+class OrderStatus(models.TextChoices):
+    PENDING_PAYMENT = 'pending_payment', 'Pending Payment'
+    PAID = 'paid', 'Paid'
+    FAILED = 'failed', 'Failed'
+    CANCELLED = 'cancelled', 'Cancelled'
+    REFUNDED = 'refunded', 'Refunded'
+
+
+class PaymentMethod(models.TextChoices):
+    WALLET = 'wallet', 'Wallet Balance'
+    SEPAY_TRANSFER = 'sepay_transfer', 'SePay Transfer (QR/Bank)'
+
+
+class LicenseStatus(models.TextChoices):
+    ACTIVE = 'active', 'Active'
+    EXPIRED = 'expired', 'Expired'
+    SUSPENDED = 'suspended', 'Suspended'
+    REVOKED = 'revoked', 'Revoked'
+
+
+class WalletTxType(models.TextChoices):
+    DEPOSIT = 'deposit', 'Nạp tiền (từ SePay)'
+    PURCHASE = 'purchase', 'Mua bot'
+    REFUND = 'refund', 'Hoàn tiền'
+    WITHDRAWAL = 'withdrawal', 'Rút tiền'
+    TRANSFER_IN = 'transfer_in', 'Chuyển đến'
+    TRANSFER_OUT = 'transfer_out', 'Chuyển đi'
+
+
 class PayOrder(models.Model):
     """
     Đơn hàng có thể được thanh toán qua payment intents.
@@ -132,16 +161,8 @@ class PayWallet(models.Model):
 
 class PayWalletLedger(models.Model):
     """
-    Nguồn sự thật cho tất cả giao dịch ví. Mọi thay đổi số dư phải đi qua ledger này.
+    Nguồn sự thật cho tất cả giao dịch ví. Mọi thay đổi số dù phải đi qua ledger này.
     """
-    TX_TYPE_CHOICES = [
-        ('deposit', 'Deposit'),
-        ('withdraw', 'Withdraw'),
-        ('payment', 'Payment'),
-        ('refund', 'Refund'),
-        ('adjustment', 'Adjustment'),
-    ]
-
     ledger_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     wallet = models.ForeignKey(
         PayWallet,
@@ -151,16 +172,16 @@ class PayWalletLedger(models.Model):
     )
     tx_type = models.CharField(
         max_length=20,
-        choices=TX_TYPE_CHOICES,
-        db_comment="Loại giao dịch: deposit | withdraw | payment | refund | adjustment"
+        choices=WalletTxType.choices,
+        db_comment="Loại biến động: nạp/purchase/hoàn tiền/..."
     )
     amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số tiền giao dịch (luôn là số dương)"
+        db_comment="Luôn > 0; chiều thể hiện bằng is_credit"
     )
     is_credit = models.BooleanField(
-        db_comment="true = cộng tiền, false = trừ tiền"
+        db_comment="true: cộng ví; false: trừ ví"
     )
     balance_before = models.DecimalField(
         max_digits=18,
@@ -170,7 +191,14 @@ class PayWalletLedger(models.Model):
     balance_after = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số dư sau giao dịch"
+        db_comment="Số dư ngay sau giao dịch này"
+    )
+    order = models.ForeignKey(
+        'PaySymbolOrder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_comment="Liên kết đơn hàng khi là purchase/refund"
     )
     payment = models.ForeignKey(
         'PayPayment',
@@ -178,26 +206,27 @@ class PayWalletLedger(models.Model):
         null=True,
         blank=True,
         related_name='ledger_entries',
-        db_comment="Payment liên quan (nếu có)"
+        db_comment="Bắt buộc với deposit (nạp qua SePay)"
     )
-    description = models.TextField(
+    note = models.TextField(
         blank=True,
-        db_comment="Mô tả giao dịch"
+        db_comment="Diễn giải ngắn gọn cho bản ghi sổ cái"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Dữ liệu bổ sung"
+        db_comment="Payload bổ sung: ip, device, source, ..."
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pay_wallet_ledger"
-        db_table_comment = "Nguồn sự thật cho tất cả giao dịch ví. Mọi thay đổi số dư phải đi qua ledger này."
+        db_table_comment = "Quy tắc: deposit phải có payment_id (SePay); purchase phải có order_id. Sổ cái là nguồn sự thật để tính balance."
         indexes = [
-            models.Index(fields=['wallet', 'created_at'], name='idx_wallet_ledger_wallet'),
-            models.Index(fields=['payment'], name='idx_wallet_ledger_payment'),
-            models.Index(fields=['tx_type'], name='idx_wallet_ledger_tx_type'),
+            models.Index(fields=['wallet', 'created_at'], name='idx_ledger_wallet_created'),
+            models.Index(fields=['payment'], name='idx_ledger_payment'),
+            models.Index(fields=['tx_type'], name='idx_ledger_tx_type'),
+            models.Index(fields=['order'], name='idx_ledger_order'),
         ]
         ordering = ['-created_at']
 
@@ -229,7 +258,7 @@ class PayPaymentIntent(models.Model):
         db_comment="Ai đang thanh toán"
     )
     order = models.ForeignKey(
-        PayOrder,
+        'PaySymbolOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -418,7 +447,7 @@ class PayPayment(models.Model):
         db_comment="Người thực hiện thanh toán"
     )
     order = models.ForeignKey(
-        PayOrder,
+        'PaySymbolOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -600,3 +629,186 @@ class SeapayOrder(models.Model):
 
     def __str__(self):
         return f"Order {self.id} - {self.status}"
+
+
+# ============================================================================
+# BOT PURCHASE SYSTEM MODELS
+# ============================================================================
+
+class PaySymbolOrder(models.Model):
+    """
+    Đơn hàng để mua quyền truy cập symbol. Có thể thanh toán trực tiếp qua SePay hoặc trừ ví nếu đã nạp.
+    """
+    order_id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False,
+        db_comment="ID đơn hàng"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        db_comment="Người mua quyền truy cập symbol"
+    )
+    total_amount = models.DecimalField(
+        max_digits=18,
+        decimal_places=2,
+        db_comment="Tổng tiền cần trả cho đơn"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=OrderStatus.choices,
+        default=OrderStatus.PENDING_PAYMENT,
+        db_comment="Trạng thái vòng đời đơn"
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PaymentMethod.choices,
+        null=True,
+        blank=True,
+        db_comment="wallet (trừ ví) hoặc sepay_transfer (QR/STK)"
+    )
+    description = models.TextField(
+        null=True,
+        blank=True,
+        db_comment="Mô tả/ghi chú đơn hàng"
+    )
+    payment_intent = models.ForeignKey(
+        'PayPaymentIntent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_comment="Payment intent cho SePay transfer"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "pay_symbol_orders"
+        db_table_comment = "Đơn hàng để mua quyền truy cập symbol. Có thể thanh toán trực tiếp qua SePay hoặc trừ ví nếu đã nạp."
+        indexes = [
+            models.Index(fields=['user', 'status'], name='idx_symbol_orders_user_status'),
+            models.Index(fields=['status'], name='idx_symbol_orders_status'),
+            models.Index(fields=['created_at'], name='idx_symbol_orders_created'),
+        ]
+
+    def __str__(self):
+        return f"Symbol Order {self.order_id} - {self.user.username} - {self.status}"
+
+
+class PaySymbolOrderItem(models.Model):
+    """
+    Chi tiết từng dòng sản phẩm trong đơn: symbol nào, thời hạn bao lâu.
+    """
+    order_item_id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False,
+        db_comment="ID item đơn hàng"
+    )
+    order = models.ForeignKey(
+        PaySymbolOrder,
+        on_delete=models.CASCADE,
+        related_name='items',
+        db_comment="Đơn hàng chính"
+    )
+    symbol_id = models.BigIntegerField(
+        db_comment="Symbol là sản phẩm được bán"
+    )
+    price = models.DecimalField(
+        max_digits=18,
+        decimal_places=2,
+        db_comment="Đơn giá tại thời điểm mua"
+    )
+    license_days = models.IntegerField(
+        null=True,
+        blank=True,
+        db_comment="Số ngày cấp quyền sử dụng symbol; null = trọn đời"
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        db_comment="Thuộc tính thêm (phiên bản, biến thể, ...)"
+    )
+
+    class Meta:
+        db_table = "pay_symbol_order_items"
+        db_table_comment = "Chi tiết từng dòng sản phẩm trong đơn: symbol nào, thời hạn bao lâu."
+        indexes = [
+            models.Index(fields=['order'], name='idx_symbol_order_items_order'),
+            models.Index(fields=['symbol_id'], name='idx_symbol_order_items_symbol'),
+        ]
+
+    def __str__(self):
+        return f"Order Item {self.order_item_id} - Symbol {self.symbol_id}"
+
+
+class PayUserSymbolLicense(models.Model):
+    """
+    Quyền sử dụng symbol để quyết định ai được nhận tín hiệu. 
+    Gia hạn bằng cách tạo license mới hoặc cập nhật end_at.
+    """
+    license_id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False,
+        db_comment="ID license"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        db_comment="User được cấp quyền"
+    )
+    symbol_id = models.BigIntegerField(
+        db_comment="Symbol được cấp quyền"
+    )
+    order = models.ForeignKey(
+        PaySymbolOrder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_comment="Đơn hàng tạo ra license này"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=LicenseStatus.choices,
+        default=LicenseStatus.ACTIVE,
+        db_comment="Trạng thái quyền dùng symbol"
+    )
+    start_at = models.DateTimeField(
+        default=timezone.now,
+        db_comment="Thời điểm kích hoạt"
+    )
+    end_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_comment="Thời điểm hết hạn; null = trọn đời"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pay_user_symbol_licenses"
+        db_table_comment = "Quyền sử dụng symbol để quyết định ai được nhận tín hiệu."
+        indexes = [
+            models.Index(fields=['user', 'symbol_id'], name='idx_symbol_lic_user_symbol'),
+            models.Index(fields=['status'], name='idx_symbol_lic_status'),
+            models.Index(fields=['end_at'], name='idx_symbol_lic_end_at'),
+        ]
+        unique_together = [('user', 'symbol_id', 'start_at')]
+
+    def __str__(self):
+        return f"License {self.license_id} - {self.user.username} - Symbol {self.symbol_id}"
+
+    @property
+    def is_active(self):
+        """Kiểm tra license có còn hiệu lực không"""
+        if self.status != LicenseStatus.ACTIVE:
+            return False
+        if self.end_at and timezone.now() > self.end_at:
+            return False
+        return True
+
+    @property
+    def is_lifetime(self):
+        """Kiểm tra có phải license trọn đời không"""
+        return self.end_at is None

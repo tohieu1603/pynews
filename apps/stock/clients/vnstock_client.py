@@ -97,6 +97,7 @@ class VNStockClient:
         df = listing.symbols_by_exchange()
         exch = (exchange or "HSX").upper()
         df = df[df["exchange"] == exch]
+        df = df[df["symbol"].str.fullmatch(r"[A-Za-z]+", na=False)]
 
         for _, row in df.iterrows():
             yield str(row.get("symbol")), str(row.get("exchange"))
