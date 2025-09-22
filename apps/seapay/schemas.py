@@ -117,3 +117,68 @@ class PaginatedPaymentIntent(Schema):
     page_size: int
     user: UserResponse  
     results: List[PaymentIntentOut]
+
+
+# Wallet Topup Schemas
+class CreateWalletTopupRequest(Schema):
+    amount: Decimal
+    currency: str = "VND"
+    bank_code: str = "BIDV"
+    expires_in_minutes: int = 60
+
+
+class CreateWalletTopupResponse(Schema):
+    intent_id: str
+    order_code: str
+    amount: Decimal
+    currency: str
+    status: str
+    qr_image_url: str
+    account_number: str
+    account_name: str
+    transfer_content: str
+    bank_code: str
+    expires_at: str
+    message: str
+
+
+class WalletTopupStatusResponse(Schema):
+    intent_id: str
+    order_code: str
+    amount: Decimal
+    status: str
+    is_expired: bool
+    qr_image_url: str
+    account_number: str
+    account_name: str
+    transfer_content: str
+    bank_code: str
+    expires_at: str
+    payment_id: Optional[str] = None
+    provider_payment_id: Optional[str] = None
+    balance_before: Optional[Decimal] = None
+    balance_after: Optional[Decimal] = None
+    completed_at: Optional[str] = None
+    message: str
+
+
+class SepayWebhookRequest(Schema):
+    id: int
+    gateway: str
+    transactionDate: str
+    accountNumber: str
+    subAccount: Optional[str] = None
+    code: Optional[str] = None
+    content: str
+    transferType: str
+    description: str
+    transferAmount: Decimal
+    referenceCode: str
+    accumulated: Optional[int] = None
+
+
+class SepayWebhookResponse(Schema):
+    status: str
+    message: str
+    payment_id: Optional[str] = None
+    processed_at: str

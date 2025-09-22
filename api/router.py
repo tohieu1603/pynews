@@ -2,9 +2,7 @@ from ninja import NinjaAPI
 from apps.stock.routers.vnstock_import import router as stock_router
 from apps.account.api import router as account_router
 from apps.calculate.routers.calculate import router as calculate_router
-
 from apps.seapay.api import router as seapay_router
-
 api = NinjaAPI(title="Togogo Analysis API", version="1.0.0")
 
 # Routers

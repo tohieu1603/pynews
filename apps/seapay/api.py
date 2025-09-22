@@ -2,9 +2,13 @@ import json
 from ninja import Router
 from ninja.errors import HttpError
 from django.http import HttpRequest
+from django.utils import timezone
+from typing import Optional
+from decimal import Decimal
 from core.jwt_auth import JWTAuth
 
 from apps.seapay.services.payment_service import PaymentService
+from apps.seapay.services.wallet_topup_service import WalletTopupService
 from apps.seapay.schemas import (
     CreatePaymentIntentRequest,
     CreatePaymentIntentResponse,
@@ -16,11 +20,18 @@ from apps.seapay.schemas import (
     FallbackCallbackResponse,
     PaymentIntentOut,
     PaginatedPaymentIntent,
-    UserResponse,  # Added UserResponse import
+    UserResponse,
+    # Wallet topup schemas
+    CreateWalletTopupRequest,
+    CreateWalletTopupResponse,
+    WalletTopupStatusResponse,
+    SepayWebhookRequest,
+    SepayWebhookResponse
 )
 
 router = Router()
 payment_service = PaymentService()
+topup_service = WalletTopupService()
 
 
 @router.post("/create-intent", response=CreatePaymentIntentResponse, auth=JWTAuth())
@@ -53,29 +64,80 @@ def create_payment_intent(request: HttpRequest, data: CreatePaymentIntentRequest
 
 @router.post("/callback")
 @router.get("/callback")
+@router.post("/callback/")
+@router.get("/callback/")
 def seapay_callback(request: HttpRequest):
-
+    """SePay callback endpoint - handles both JSON and form data"""
+    print("=== SEPAY CALLBACK RECEIVED ===")
+    print(f"Method: {request.method}")
+    print(f"Path: {request.path}")
+    print(f"Headers: {dict(request.headers)}")
+    print(f"Query params: {dict(request.GET)}")
+    
+    # Try multiple data parsing methods
+    data = {}
+    
+    # Method 1: JSON body
     try:
-        data = json.loads(request.body)
-        print("SePay callback data:", data)
+        if request.body:
+            data = json.loads(request.body)
+            print("✅ Parsed JSON data:", data)
     except Exception as e:
-        print(f"JSON parsing error: {e}")
+        print(f"❌ JSON parsing error: {e}")
+        
+        # Method 2: Form data
         try:
             data = dict(request.POST)
-            print(f"Form data: {data}")
-        except Exception:
-            return PaymentCallbackResponse(
-                message="Could not parse request data"
+            print("✅ Parsed form data:", data)
+        except Exception as e2:
+            print(f"❌ Form parsing error: {e2}")
+            
+            # Method 3: Query parameters
+            try:
+                data = dict(request.GET)
+                print("✅ Using query params:", data)
+            except Exception as e3:
+                print(f"❌ Query param error: {e3}")
+                return PaymentCallbackResponse(
+                    message="Could not parse request data"
+                )
+
+    try:
+        # Kiểm tra xem đây có phải là wallet topup không
+        if data.get("content", "").startswith("TOPUP"):
+            # Xử lý wallet topup callback
+            result = topup_service.process_webhook_event({
+                'id': data.get('id'),
+                'gateway': data.get('gateway'),
+                'transactionDate': data.get('transactionDate'),
+                'accountNumber': data.get('accountNumber'),
+                'subAccount': data.get('subAccount'),
+                'code': data.get('code'),
+                'content': data.get('content'),
+                'transferType': data.get('transferType'),
+                'description': data.get('description'),
+                'transferAmount': data.get('transferAmount'),
+                'referenceCode': data.get('referenceCode'),
+                'accumulated': data.get('accumulated', 0)
+            })
+            print("✅ Wallet topup callback processed:", result)
+        else:
+            # Xử lý payment intent thông thường
+            result = payment_service.process_callback(
+                content=data.get("content", "").strip(),
+                amount=data.get("transferAmount", 0),
+                transfer_type=data.get("transferType", ""),
+                reference_code=data.get("referenceCode", "")
             )
-    
-    result = payment_service.process_callback(
-        content=data.get("content", "").strip(),
-        amount=data.get("transferAmount", 0),
-        transfer_type=data.get("transferType", ""),
-        reference_code=data.get("referenceCode", "")
-    )
-    
-    return PaymentCallbackResponse(**result)
+            print("✅ Payment callback processed:", result)
+            
+        return PaymentCallbackResponse(**result)
+        
+    except Exception as e:
+        print(f"❌ Callback processing error: {e}")
+        return PaymentCallbackResponse(
+            message=f"Callback processing failed: {str(e)}"
+        )
 
 
 @router.get("/intent/{intent_id}", response=PaymentIntentDetailResponse, auth=JWTAuth())
@@ -192,19 +254,154 @@ def list_user_payments(
 
 
 
-@router.post("/callback/")
-@router.get("/callback/")
 @router.post("/webhook")
 @router.get("/webhook")
-def seapay_callback_fallback(request: HttpRequest):
-    """Fallback callback endpoint for debugging"""
-    print("=== SEPAY FALLBACK CALLBACK ===")
+def seapay_webhook_fallback(request: HttpRequest):
+    """Fallback webhook endpoint for debugging"""
+    print("=== SEPAY WEBHOOK FALLBACK ===")
     print(f"Method: {request.method}")
     print(f"Path: {request.path}")
     
     return FallbackCallbackResponse(
-        message="Fallback callback received",
+        message="Webhook fallback received",
         path=request.path,
         method=request.method
     )
+
+
+# ============================================================================
+# WALLET TOPUP ENDPOINTS
+# ============================================================================
+
+@router.post("/wallet/topup/create", response=CreateWalletTopupResponse, auth=JWTAuth())
+def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
+    """
+    Tạo yêu cầu nạp tiền vào ví
+    
+    Luồng:
+    1. Tạo payment intent (purpose = wallet_topup)
+    2. Tạo payment attempt với QR code
+    3. Trả về thông tin QR để user thanh toán
+    """
+    try:
+        # Validate amount
+        if data.amount <= 0:
+            raise HttpError(400, "Amount must be greater than 0")
+        
+        if data.amount > Decimal('100000000'):  # 100M VND limit
+            raise HttpError(400, "Amount exceeds maximum limit")
+        
+        # Tạo intent
+        intent = topup_service.create_topup_intent(
+            user=request.auth,
+            amount=data.amount,
+            currency=data.currency,
+            expires_in_minutes=data.expires_in_minutes,
+            metadata={
+                'ip_address': request.META.get('REMOTE_ADDR'),
+                'user_agent': request.META.get('HTTP_USER_AGENT'),
+            }
+        )
+        
+        # Tạo attempt với QR code
+        attempt = topup_service.create_payment_attempt(
+            intent=intent,
+            bank_code=data.bank_code
+        )
+        
+        return CreateWalletTopupResponse(
+            intent_id=str(intent.intent_id),
+            order_code=intent.order_code,
+            amount=intent.amount,
+            currency="VND",
+            status=intent.status,
+            qr_image_url=attempt.qr_image_url or "",
+            account_number=attempt.account_number or "",
+            account_name=attempt.account_name or "",
+            transfer_content=attempt.transfer_content or "",
+            bank_code=attempt.bank_code or "",
+            expires_at=intent.expires_at.isoformat() if intent.expires_at else "",
+            message="Topup request created successfully. Please scan QR code to complete payment."
+        )
+        
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    except Exception as e:
+        raise HttpError(500, f"Failed to create topup request: {str(e)}")
+
+
+@router.get("/wallet/topup/{intent_id}/status", response=WalletTopupStatusResponse, auth=JWTAuth())
+def get_topup_status(request: HttpRequest, intent_id: str):
+    """
+    Kiểm tra trạng thái nạp tiền
+    """
+    try:
+        status_data = topup_service.get_topup_status(intent_id, request.auth)
+        
+        intent = status_data['intent']
+        attempt = status_data.get('attempt')
+        payment = status_data.get('payment')
+        ledger = status_data.get('ledger')
+        
+        return WalletTopupStatusResponse(
+            intent_id=intent['id'],
+            order_code=intent['order_code'],
+            amount=Decimal(str(intent['amount'])),
+            status=intent['status'],
+            is_expired=intent['is_expired'],
+            qr_image_url=attempt['qr_image_url'] if attempt else "",
+            account_number=attempt['account_number'] if attempt else "",
+            account_name=attempt['account_name'] if attempt else "",
+            transfer_content=attempt['transfer_content'] if attempt else "",
+            bank_code=attempt['bank_code'] if attempt else "",
+            expires_at=intent['expires_at'] or "",
+            payment_id=payment['id'] if payment else None,
+            provider_payment_id=payment['provider_payment_id'] if payment else None,
+            balance_before=ledger['balance_before'] if ledger else None,
+            balance_after=ledger['balance_after'] if ledger else None,
+            completed_at=payment['created_at'] if payment else None,
+            message=f"Topup status: {intent['status']}"
+        )
+        
+    except ValueError as e:
+        raise HttpError(404, str(e))
+    except Exception as e:
+        raise HttpError(500, f"Failed to get topup status: {str(e)}")
+
+
+@router.post("/wallet/webhook/sepay", response=SepayWebhookResponse)
+def handle_sepay_webhook(request: HttpRequest, data: SepayWebhookRequest):
+    """
+    Xử lý webhook từ SePay
+    
+    Luồng:
+    1. Lưu webhook event thô vào pay_sepay_webhook_events
+    2. Đối soát với payment intent dựa trên content
+    3. Tạo payment record nếu match
+    4. Ghi ledger và cập nhật số dư ví
+    """
+    try:
+        # Convert request data to dict
+        webhook_payload = data.dict()
+        
+        # Process webhook
+        result = topup_service.process_webhook_event(webhook_payload)
+        
+        return SepayWebhookResponse(
+            status="success",
+            message=result.get('message', 'Webhook processed successfully'),
+            payment_id=result.get('payment_id'),
+            processed_at=timezone.now().isoformat()
+        )
+        
+    except Exception as e:
+        # Log error nhưng vẫn trả về success để SePay không retry
+        print(f"Webhook processing error: {str(e)}")
+        
+        return SepayWebhookResponse(
+            status="error",
+            message=f"Webhook processing failed: {str(e)}",
+            payment_id=None,
+            processed_at=timezone.now().isoformat()
+        )
 
