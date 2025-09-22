@@ -43,10 +43,12 @@ INSTALLED_APPS = [
     "apps.account",
     "apps.calculate",
     "apps.seapay",
+    "apps.logs.apps.LogsConfig",
     "core",
 ]
 
 MIDDLEWARE = [
+    "apps.logs.middleware.RequestLoggingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -122,12 +124,44 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 FRONTEND_URL = os.getenv("FRONTEND_URL")
+APP_ENV = os.getenv("APP_ENV", "local")
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 JWT_ACCESS_TTL_MIN = int(os.getenv("JWT_ACCESS_TTL_MIN", "60"))
 JWT_REFRESH_TTL_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "plain",
+        },
+        "db": {
+            "class": "apps.logs.handlers.DatabaseLogHandler",
+            "formatter": "plain",
+            "level": "INFO",
+        },
+    },
+    "loggers": {
+        "app": {
+            "handlers": ["db", "console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["db", "console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
 # =========================
 # CORS / CSRF
 # =========================
