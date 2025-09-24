@@ -153,7 +153,7 @@ class PaymentRepository:
         page = page or 1
         limit = limit or 10
         
-        qs = PayPaymentIntent.objects.filter(user=user).select_related('user', 'wallet') 
+        qs = PayPaymentIntent.objects.filter(user=user).select_related('user') 
 
         if search:
             qs = qs.filter(order_code__icontains=search)

@@ -11,6 +11,7 @@ from ..models import (
     PaymentMethod, LicenseStatus, IntentPurpose
 )
 from .payment_service import PaymentService
+from apps.stock.models import Symbol
 
 
 class SymbolPurchaseService:
@@ -622,7 +623,13 @@ class SymbolPurchaseService:
             'total_pages': (total + limit - 1) // limit
         }
     
-    def get_order_history(self, user: User, page: int = 1, limit: int = 20) -> Dict:
+    def get_order_history(
+        self,
+        user: User,
+        page: int = 1,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> Dict:
         """
         Lấy lịch sử mua symbol của user
         
@@ -635,33 +642,57 @@ class SymbolPurchaseService:
             Dict với danh sách order và phân trang
         """
         offset = (page - 1) * limit
-        
-        orders = PaySymbolOrder.objects.filter(user=user).order_by('-created_at')
-        total = orders.count()
-        
+
+        if status is None:
+            status_filter = [OrderStatus.PAID]
+        else:
+            status_filter = [status]
+
+        orders_qs = (
+            PaySymbolOrder.objects.filter(user=user, status__in=status_filter)
+            .order_by('-created_at')
+            .prefetch_related('items')
+        )
+        total = orders_qs.count()
+
+        orders = list(orders_qs[offset:offset + limit])
+
+        symbol_ids = {
+            item.symbol_id
+            for order in orders
+            for item in order.items.all()
+            if item.symbol_id
+        }
+        symbol_map = {
+            symbol.id: symbol.name
+            for symbol in Symbol.objects.filter(id__in=symbol_ids)
+        } if symbol_ids else {}
+
         order_list = []
-        for order in orders[offset:offset + limit]:
+        for order in orders:
             # Get items
             items = []
             for item in order.items.all():
                 items.append({
                     'symbol_id': item.symbol_id,
-                    'price': float(item.price),
+                    'symbol_name': symbol_map.get(item.symbol_id),
+                    'price': item.price,
                     'license_days': item.license_days,
-                    'metadata': item.metadata
+                    'metadata': item.metadata or {}
                 })
-            
+
             order_list.append({
                 'order_id': str(order.order_id),
-                'total_amount': float(order.total_amount),
+                'total_amount': order.total_amount,
                 'status': order.status,
                 'payment_method': order.payment_method,
-                'description': order.description,
+                'description': order.description or "",
                 'items': items,
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat()
             })
-        
+
+
         return {
             'results': order_list,
             'total': total,
@@ -669,3 +700,4 @@ class SymbolPurchaseService:
             'limit': limit,
             'total_pages': (total + limit - 1) // limit
         }
+

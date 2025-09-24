@@ -371,7 +371,7 @@ class WalletTopupService:
         """Tạo payment record"""
         payment = PayPayment.objects.create(
             user=intent.user,
-            order=None,  # Wallet topup không có order
+            order=None, 
             intent=intent,
             amount=amount,
             status=PaymentStatus.SUCCEEDED,

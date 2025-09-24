@@ -10,6 +10,8 @@ from core.jwt_auth import JWTAuth
 from apps.seapay.services.payment_service import PaymentService
 from apps.seapay.services.wallet_topup_service import WalletTopupService
 from apps.seapay.services.symbol_purchase_service import SymbolPurchaseService
+from apps.seapay.models import OrderStatus, PaymentStatus
+from apps.stock.models import Symbol
 from apps.seapay.schemas import (
     CreatePaymentIntentRequest,
     CreatePaymentIntentResponse,
@@ -193,14 +195,40 @@ def list_user_payments(
     Lấy tất cả payment intents của user với phân trang + tìm kiếm + lọc
     """
     user = request.auth
+
+    valid_statuses = {choice for choice, _ in PaymentStatus.choices}
+    resolved_status = status.strip() if isinstance(status, str) else None
+
+    if not resolved_status:
+        resolved_status = PaymentStatus.SUCCEEDED
+    elif resolved_status not in valid_statuses:
+        raise HttpError(400, "Invalid status")
+
     result = payment_service.get_paginated_payment_intents(
         user=user,
         page=page,
         limit=limit,
         search=search,
-        status=status,
+        status=resolved_status,
         purpose=purpose,
     )
+
+    payment_intents: list[PaymentIntentOut] = []
+    for intent in result["results"]:
+        metadata = intent.metadata or {}
+        payment_intents.append(
+            PaymentIntentOut(
+                id=str(intent.intent_id),
+                order_code=intent.order_code,
+                reference_code=metadata.get("reference_code"),
+                amount=intent.amount,
+                status=intent.status,
+                purpose=intent.purpose,
+                provider=metadata.get("provider", "sepay"),
+                created_at=intent.created_at,
+                user_id=intent.user_id,
+            )
+        )
 
     return PaginatedPaymentIntent(
         total=result["total"],
@@ -214,23 +242,8 @@ def list_user_payments(
             is_active=user.is_active,
             date_joined=user.date_joined,
         ),
-        results=[
-            PaymentIntentOut(
-                id=str(intent.id),
-                order_code=intent.order_code,
-                reference_code=intent.reference_code,
-                amount=intent.amount,
-                status=intent.status,
-                purpose=intent.purpose,
-                provider=intent.provider,
-                created_at=intent.created_at,
-                user_id=intent.user.id,  
-            )
-            for intent in result["results"]
-        ],
+        results=payment_intents,
     )
-
-
 
 
 @router.post("/wallet/topup/create", response=CreateWalletTopupResponse, auth=JWTAuth())
@@ -358,13 +371,17 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
             description=data.description
         )
         
+        symbol_ids = {item.symbol_id for item in order.items.all() if item.symbol_id}
+        symbol_map = {symbol.id: symbol.name for symbol in Symbol.objects.filter(id__in=symbol_ids)} if symbol_ids else {}
+
         order_items = []
         for item in order.items.all():
             order_items.append({
                 'symbol_id': item.symbol_id,
+                'symbol_name': symbol_map.get(item.symbol_id),
                 'price': item.price,
                 'license_days': item.license_days,
-                'metadata': item.metadata
+                'metadata': item.metadata or {}
             })
         
         response_data = {
@@ -505,7 +522,12 @@ def get_user_symbol_licenses(request: HttpRequest, page: int = 1, limit: int = 2
 
 
 @router.get("/symbol/orders/history", response=PaginatedSymbolOrderHistory, auth=JWTAuth())
-def get_order_history(request: HttpRequest, page: int = 1, limit: int = 20):
+def get_order_history(
+    request: HttpRequest,
+    page: int = 1,
+    limit: int = 20,
+    status: str | None = None,
+):
     """
     Lấy lịch sử mua symbol của user
     
@@ -522,9 +544,17 @@ def get_order_history(request: HttpRequest, page: int = 1, limit: int = 20):
             limit = 20
         if page <= 0:
             page = 1
-        
-        orders_data = symbol_purchase_service.get_order_history(user, page, limit)
-        
+
+        if status and status not in {choice for choice, _ in OrderStatus.choices}:
+            raise HttpError(400, "Invalid status")
+
+        orders_data = symbol_purchase_service.get_order_history(
+            user=user,
+            page=page,
+            limit=limit,
+            status=status,
+        )
+
         return PaginatedSymbolOrderHistory(**orders_data)
         
     except Exception as e:

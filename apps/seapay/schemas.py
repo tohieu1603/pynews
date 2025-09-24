@@ -205,6 +205,7 @@ class SymbolOrderItemResponse(Schema):
     symbol_id: int
     price: Decimal
     license_days: Optional[int]
+    symbol_name: Optional[str] = None
     metadata: dict
 
 
@@ -269,6 +270,7 @@ class SymbolOrderHistoryResponse(Schema):
     payment_method: str
     description: str
     created_at: str
+    updated_at: str
     items: List[SymbolOrderItemResponse]
 
 
@@ -277,3 +279,5 @@ class PaginatedSymbolOrderHistory(Schema):
     total: int
     page: int
     limit: int
+    total_pages: int
+

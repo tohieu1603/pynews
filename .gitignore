@@ -35,8 +35,9 @@ db.sqlite3
 *.sqlite3
 media/
 staticfiles/
-# Keep migrations tracked
-!apps/**/migrations/
+# Ignore migrations generated per-environment
+apps/**/migrations/
+!apps/**/migrations/__init__.py
 
 # --- Environment / secrets ---
 .env
