@@ -77,7 +77,7 @@ class News(models.Model):
     news_image_url = models.CharField(max_length=255, blank=True, null=True)
     news_source_link = models.CharField(max_length=255, blank=True, null=True)
     price_change_pct = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    public_date = models.DateTimeField(null=True, blank=True)
+    public_date = models.BigIntegerField(null=True, blank=True)
     company = models.ForeignKey(
         'Company',
         on_delete=models.CASCADE,

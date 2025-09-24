@@ -58,16 +58,25 @@ def upsert_shareholders(company: Company, rows: Iterable[Dict]) -> None:
 
 def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
     for r in rows:
+        print("DEBUG ROW:", r)  # xem thực tế dict có key gì
+
+        public_date = r.get("public_date")
+        if public_date:
+            # Nếu DB đang là bigint
+            public_date = int(public_date / 1000)
+
         News.objects.update_or_create(
             title=(r.get("title") or "").strip(),
             company=company,
             defaults={
                 "news_image_url": r.get("news_image_url"),
                 "news_source_link": r.get("news_source_link"),
-                "public_date": r.get("public_date"),
+                "public_date": public_date,
                 "price_change_pct": r.get("price_change_pct"),
             }
         )
+
+
 
 
 def upsert_events(company: Company, rows: Iterable[Dict]) -> None:

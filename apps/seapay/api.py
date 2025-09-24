@@ -16,26 +16,21 @@ from apps.seapay.schemas import (
     PaymentIntentDetailResponse,
     WalletResponse,
     PaymentCallbackResponse,
-    CreateLegacyOrderRequest,
-    CreateLegacyOrderResponse,
     FallbackCallbackResponse,
     PaymentIntentOut,
     PaginatedPaymentIntent,
     UserResponse,
-    # Wallet topup schemas
     CreateWalletTopupRequest,
     CreateWalletTopupResponse,
     WalletTopupStatusResponse,
     SepayWebhookRequest,
     SepayWebhookResponse,
-    # Symbol purchase schemas
     CreateSymbolOrderRequest,
     CreateSymbolOrderResponse,
     ProcessWalletPaymentResponse,
     CreateSepayPaymentResponse,
     SymbolAccessCheckResponse,
     UserSymbolLicenseResponse,
-    SymbolOrderHistoryResponse,
     PaginatedSymbolOrderHistory
 )
 
@@ -75,8 +70,6 @@ def create_payment_intent(request: HttpRequest, data: CreatePaymentIntentRequest
 
 @router.post("/callback")
 @router.get("/callback")
-@router.post("/callback/")
-@router.get("/callback/")
 def seapay_callback(request: HttpRequest):
     """SePay callback endpoint - handles both JSON and form data"""
     print("=== SEPAY CALLBACK RECEIVED ===")
@@ -136,7 +129,7 @@ def seapay_callback(request: HttpRequest):
             # Xử lý payment intent thông thường
             result = payment_service.process_callback(
                 content=data.get("content", "").strip(),
-                amount=data.get("transferAmount", 0),
+                amount=Decimal(str(data.get("transferAmount", 0))),
                 transfer_type=data.get("transferType", ""),
                 reference_code=data.get("referenceCode", "")
             )
@@ -187,31 +180,6 @@ def get_wallet(request: HttpRequest):
         updated_at=wallet.updated_at.isoformat()
     )
 
-@router.post("/create", response=CreateLegacyOrderResponse)
-def create_order(request: HttpRequest, data: CreateLegacyOrderRequest):
-    """Legacy API - use /create-intent instead"""
-    result = payment_service.create_legacy_order(
-        order_id=data.order_id,
-        amount=data.amount,
-        description=data.description
-    )
-    
-    return CreateLegacyOrderResponse(**result)
-
-@router.get('/wallet', response=WalletResponse, auth=JWTAuth())
-def get_wallet(request: HttpRequest):
-    """Lấy thông tin wallet của user"""
-    user = request.auth
-    wallet = payment_service.get_user_wallet(user)
-    return WalletResponse(
-        wallet_id=str(wallet.id),
-        balance=float(wallet.balance),
-        currency=wallet.currency,
-        status=wallet.status,
-        created_at=wallet.created_at.isoformat(),
-        updated_at=wallet.updated_at.isoformat()
-    )
-
 @router.get("/payments/user", response=PaginatedPaymentIntent, auth=JWTAuth())
 def list_user_payments(
     request: HttpRequest,
@@ -238,7 +206,7 @@ def list_user_payments(
         total=result["total"],
         page=result["page"],
         page_size=result["page_size"],
-        user=UserResponse(  # User info ở top level
+        user=UserResponse(
             id=user.id,
             email=user.email,
             first_name=user.first_name,
@@ -256,7 +224,7 @@ def list_user_payments(
                 purpose=intent.purpose,
                 provider=intent.provider,
                 created_at=intent.created_at,
-                user_id=intent.user.id,  # Chỉ trả user_id
+                user_id=intent.user.id,  
             )
             for intent in result["results"]
         ],
@@ -264,25 +232,6 @@ def list_user_payments(
 
 
 
-
-@router.post("/webhook")
-@router.get("/webhook")
-def seapay_webhook_fallback(request: HttpRequest):
-    """Fallback webhook endpoint for debugging"""
-    print("=== SEPAY WEBHOOK FALLBACK ===")
-    print(f"Method: {request.method}")
-    print(f"Path: {request.path}")
-    
-    return FallbackCallbackResponse(
-        message="Webhook fallback received",
-        path=request.path,
-        method=request.method
-    )
-
-
-# ============================================================================
-# WALLET TOPUP ENDPOINTS
-# ============================================================================
 
 @router.post("/wallet/topup/create", response=CreateWalletTopupResponse, auth=JWTAuth())
 def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
@@ -295,14 +244,12 @@ def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
     3. Trả về thông tin QR để user thanh toán
     """
     try:
-        # Validate amount
         if data.amount <= 0:
             raise HttpError(400, "Amount must be greater than 0")
         
-        if data.amount > Decimal('100000000'):  # 100M VND limit
+        if data.amount > Decimal('100000000'): 
             raise HttpError(400, "Amount exceeds maximum limit")
         
-        # Tạo intent
         intent = topup_service.create_topup_intent(
             user=request.auth,
             amount=data.amount,
@@ -314,7 +261,6 @@ def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
             }
         )
         
-        # Tạo attempt với QR code
         attempt = topup_service.create_payment_attempt(
             intent=intent,
             bank_code=data.bank_code
@@ -380,47 +326,6 @@ def get_topup_status(request: HttpRequest, intent_id: str):
         raise HttpError(500, f"Failed to get topup status: {str(e)}")
 
 
-@router.post("/wallet/webhook/sepay", response=SepayWebhookResponse)
-def handle_sepay_webhook(request: HttpRequest, data: SepayWebhookRequest):
-    """
-    Xử lý webhook từ SePay
-    
-    Luồng:
-    1. Lưu webhook event thô vào pay_sepay_webhook_events
-    2. Đối soát với payment intent dựa trên content
-    3. Tạo payment record nếu match
-    4. Ghi ledger và cập nhật số dư ví
-    """
-    try:
-        # Convert request data to dict
-        webhook_payload = data.dict()
-        
-        # Process webhook
-        result = topup_service.process_webhook_event(webhook_payload)
-        
-        return SepayWebhookResponse(
-            status="success",
-            message=result.get('message', 'Webhook processed successfully'),
-            payment_id=result.get('payment_id'),
-            processed_at=timezone.now().isoformat()
-        )
-        
-    except Exception as e:
-        # Log error nhưng vẫn trả về success để SePay không retry
-        print(f"Webhook processing error: {str(e)}")
-        
-        return SepayWebhookResponse(
-            status="error",
-            message=f"Webhook processing failed: {str(e)}",
-            payment_id=None,
-            processed_at=timezone.now().isoformat()
-        )
-
-
-# ============================================================================
-# BOT PURCHASE ENDPOINTS
-# ============================================================================
-
 @router.post("/symbol/order/create", response=CreateSymbolOrderResponse, auth=JWTAuth())
 def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
     """
@@ -434,11 +339,9 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
     try:
         user = request.auth
         
-        # Validate items
         if not data.items:
             raise HttpError(400, "Order must have at least one item")
         
-        # Convert items to dict format
         items = []
         for item in data.items:
             items.append({
@@ -448,7 +351,6 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
                 'metadata': item.metadata or {}
             })
         
-        # Tạo order
         order = symbol_purchase_service.create_symbol_order(
             user=user,
             items=items,
@@ -456,7 +358,6 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
             description=data.description
         )
         
-        # Format response
         order_items = []
         for item in order.items.all():
             order_items.append({
@@ -466,18 +367,49 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
                 'metadata': item.metadata
             })
         
-        return CreateSymbolOrderResponse(
-            order_id=str(order.order_id),
-            total_amount=order.total_amount,
-            status=order.status,
-            payment_method=order.payment_method,
-            items=order_items,
-            created_at=order.created_at.isoformat(),
-            message=f"Order created successfully. Total: {order.total_amount} VND"
-        )
+        response_data = {
+            'order_id': str(order.order_id),
+            'total_amount': order.total_amount,
+            'status': order.status,
+            'payment_method': order.payment_method,
+            'items': order_items,
+            'created_at': order.created_at.isoformat(),
+            'message': f"Order created successfully. Total: {order.total_amount} VND"
+        }
+        
+        if order.payment_intent:
+            response_data.update({
+                'payment_intent_id': str(order.payment_intent.intent_id),
+                'qr_code_url': order.payment_intent.qr_code_url,
+                'deep_link': order.payment_intent.deep_link
+            })
+            
+            # Update message for SePay orders
+            if order.payment_method != 'wallet':
+                response_data['message'] = f"Order created with SePay payment. Scan QR code to pay {order.total_amount} VND"
+        
+        return CreateSymbolOrderResponse(**response_data)
         
     except ValueError as e:
-        raise HttpError(400, str(e))
+        # Handle insufficient balance exception with detailed info
+        if isinstance(e.args[0], dict) and e.args[0].get('code') == 'INSUFFICIENT_BALANCE':
+            error_info = e.args[0]
+            # Return JSON response for insufficient balance
+            from django.http import JsonResponse
+            return JsonResponse({
+                "error": "INSUFFICIENT_BALANCE", 
+                "message": error_info['message'],
+                "details": {
+                    "required_amount": error_info['required_amount'],
+                    "current_balance": error_info['current_balance'],
+                    "insufficient_amount": error_info['insufficient_amount'],
+                    "order_id": error_info['order_id'],
+                    "topup_endpoint": error_info['topup_endpoint']
+                }
+            }, status=400)
+        else:
+            # Handle other ValueError exceptions
+            raise HttpError(400, str(e))
     except Exception as e:
         raise HttpError(500, f"Failed to create order: {str(e)}")
 
@@ -486,13 +418,6 @@ def create_symbol_order(request: HttpRequest, data: CreateSymbolOrderRequest):
 def pay_symbol_order_with_wallet(request: HttpRequest, order_id: str):
     """
     Thanh toán đơn hàng symbol bằng ví
-    
-    Luồng:
-    1. Kiểm tra order status = pending_payment
-    2. Kiểm tra số dư ví đủ không
-    3. Trừ tiền từ ví và ghi ledger
-    4. Cập nhật order status = paid
-    5. Tạo license cho user
     """
     try:
         user = request.auth
@@ -509,11 +434,6 @@ def pay_symbol_order_with_wallet(request: HttpRequest, order_id: str):
 def create_sepay_payment(request: HttpRequest, order_id: str):
     """
     Tạo payment intent cho thanh toán SePay cho đơn hàng symbol
-    
-    Luồng:
-    1. Kiểm tra order
-    2. Tạo payment intent
-    3. Trả về QR code và thông tin thanh toán
     """
     try:
         user = request.auth
@@ -526,6 +446,24 @@ def create_sepay_payment(request: HttpRequest, order_id: str):
         raise HttpError(404, str(e))
     except Exception as e:
         raise HttpError(500, f"Failed to create payment intent: {str(e)}")
+
+
+@router.post("/symbol/order/{order_id}/topup-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
+def create_sepay_topup_for_order(request: HttpRequest, order_id: str):
+    """
+    Tạo SePay QR để nạp tiền khi số dư không đủ thanh toán đơn hàng
+    """
+    try:
+        user = request.auth
+        
+        result = symbol_purchase_service.create_sepay_topup_for_insufficient_order(order_id, user)
+        
+        return CreateSepayPaymentResponse(**result)
+        
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    except Exception as e:
+        raise HttpError(500, f"Failed to create topup intent: {str(e)}")
 
 
 @router.get("/symbol/{symbol_id}/access", response=SymbolAccessCheckResponse, auth=JWTAuth())

@@ -11,6 +11,7 @@ from apps.calculate.services.query_financial_service import QueryFinancialServic
 from apps.calculate.dtos.cash_flow_dto import CashFlowOut
 from apps.calculate.dtos.income_statement_dto import InComeOut
 from apps.calculate.dtos.blance_sheet_dto import BalanceSheetOut
+from apps.calculate.dtos.ratio_dto import RatioOut
 router = Router(tags=["calculate"])
 
 
@@ -176,3 +177,7 @@ def get_incomes(request, symbol_id: int):
 def get_balances(request, symbol_id: int):
     service = QueryFinancialService()
     return service.get_balance_sheets(symbol_id)
+@router.get("/ratios/{symbol_id}", response=List[RatioOut])
+def get_ratios(request, symbol_id: int):
+    service = QueryFinancialService()
+    return service.get_ratios(symbol_id)

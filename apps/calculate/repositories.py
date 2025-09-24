@@ -169,7 +169,21 @@ def qs_ratio(symbol_id: int):
         return Ratio.objects.filter(
             symbol_id=symbol_id,
             year_report__gte=ten_years_ago
-        ).select_related('symbol').order_by('-year_report', '-length_report')
+        ).select_related('symbol').order_by('-year_report', '-length_report')[:10]
+    except Exception as e:
+        logger.error(f"[qs_ratio] Error fetching ratios for symbol_id={symbol_id}: {e}")
+        return Ratio.objects.none()
+    
+def qs_ratio(symbol_id: int):
+    try:
+        from datetime import datetime
+        current_year = datetime.now().year
+        ten_years_ago = current_year - 8
+        
+        return Ratio.objects.filter(
+            symbol_id=symbol_id,
+            year_report__gte=ten_years_ago
+        ).select_related('symbol').order_by('-year_report', '-length_report')[:10]
     except Exception as e:
         logger.error(f"[qs_ratio] Error fetching ratios for symbol_id={symbol_id}: {e}")
         return Ratio.objects.none()

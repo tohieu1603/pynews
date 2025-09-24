@@ -412,7 +412,7 @@ class WalletTopupService:
             balance_before=balance_before,
             balance_after=balance_after,
             payment=payment,
-            description=description,
+            note=description,
             metadata={}
         )
         

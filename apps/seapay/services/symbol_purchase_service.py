@@ -10,16 +10,15 @@ from ..models import (
     PayUserSymbolLicense, PayPaymentIntent, WalletTxType, OrderStatus,
     PaymentMethod, LicenseStatus, IntentPurpose
 )
-from .wallet_topup_service import WalletTopupService
+from .payment_service import PaymentService
 
 
 class SymbolPurchaseService:
     """Service xử lý việc mua quyền truy cập symbol (mã chứng khoán)"""
     
     def __init__(self):
-        self.wallet_service = WalletTopupService()
+        self.payment_service = PaymentService()
     
-    @transaction.atomic
     def create_symbol_order(
         self, 
         user: User, 
@@ -39,11 +38,9 @@ class SymbolPurchaseService:
         Returns:
             PaySymbolOrder instance
         """
-        # Validate payment method
         if payment_method not in [PaymentMethod.WALLET, PaymentMethod.SEPAY_TRANSFER]:
             raise ValueError(f"Invalid payment method: {payment_method}")
         
-        # Validate items
         if not items:
             raise ValueError("Order must have at least one item")
         
@@ -53,53 +50,190 @@ class SymbolPurchaseService:
             if item['price'] <= 0:
                 raise ValueError("Price must be positive")
         
-        # Calculate total amount
         total_amount = sum(Decimal(str(item['price'])) for item in items)
         
-        # Check wallet balance if payment method is wallet
+        # Tạo order trước (với transaction riêng để đảm bảo được lưu)
+        with transaction.atomic():
+            order = PaySymbolOrder.objects.create(
+                user=user,
+                total_amount=total_amount,
+                status=OrderStatus.PENDING_PAYMENT,
+                payment_method=payment_method,
+                description=description or f"Mua quyền truy cập {len(items)} symbol"
+            )
+            
+            # Tạo order items
+            for item_data in items:
+                PaySymbolOrderItem.objects.create(
+                    order=order,
+                    symbol_id=item_data['symbol_id'],
+                    price=Decimal(str(item_data['price'])),
+                    license_days=item_data.get('license_days'),
+                    metadata=item_data.get('metadata', {})
+                )
+        
+        # Bây giờ order đã được lưu, check payment method
         if payment_method == PaymentMethod.WALLET:
             try:
                 wallet = PayWallet.objects.get(user=user)
-                if wallet.balance < total_amount:
-                    raise ValueError(
-                        f"Insufficient wallet balance. Required: {total_amount} VND, "
-                        f"Available: {wallet.balance} VND"
-                    )
+                if wallet.balance >= total_amount:
+                    # Đủ số dư - process payment trong transaction riêng
+                    return self._process_immediate_wallet_payment(order, wallet)
+                else:
+                    # Số dư không đủ - raise exception nhưng giữ order
+                    insufficient_amount = total_amount - wallet.balance
+                    raise ValueError({
+                        "code": "INSUFFICIENT_BALANCE",
+                        "message": f"Số dư không đủ. Cần thêm {insufficient_amount:,.0f} VND",
+                        "required_amount": float(total_amount),
+                        "current_balance": float(wallet.balance),
+                        "insufficient_amount": float(insufficient_amount),
+                        "order_id": str(order.order_id),
+                        "topup_endpoint": f"/api/sepay/symbol/order/{order.order_id}/topup-sepay"
+                    })
             except PayWallet.DoesNotExist:
+                # Xóa order nếu không có wallet
+                order.delete()
                 raise ValueError("User wallet not found. Please create a wallet first.")
-        
-        # Create order
-        order = PaySymbolOrder.objects.create(
-            user=user,
-            total_amount=total_amount,
-            status=OrderStatus.PENDING_PAYMENT,
-            payment_method=payment_method,
-            description=description or f"Mua quyền truy cập {len(items)} symbol"
-        )
-        
-        # Create order items
-        for item_data in items:
-            PaySymbolOrderItem.objects.create(
-                order=order,
-                symbol_id=item_data['symbol_id'],
-                price=Decimal(str(item_data['price'])),
-                license_days=item_data.get('license_days'),
-                metadata=item_data.get('metadata', {})
-            )
+        else:
+            self._create_sepay_payment_intent_for_order(order)
         
         return order
+    
+    def _create_sepay_payment_intent_for_order(self, order: PaySymbolOrder) -> None:
+        """
+        Tự động tạo SePay payment intent cho đơn hàng
+        
+        Args:
+            order: PaySymbolOrder instance
+        """
+        try:
+            # Create payment intent using PaymentService
+            intent = self.payment_service.create_payment_intent(
+                user=order.user,
+                purpose=IntentPurpose.ORDER_PAYMENT,
+                amount=order.total_amount,
+                currency="VND",
+                metadata={
+                    'order_id': str(order.order_id),
+                    'order_type': 'symbol_purchase',
+                    'items_count': order.items.count(),
+                    'auto_created': True
+                }
+            )
+            
+            # Link order to payment intent
+            order.payment_intent = intent
+            order.save()
+            
+        except Exception as e:
+            # Log error but don't fail the order creation
+            print(f"Failed to auto-create SePay payment intent for order {order.order_id}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _process_immediate_wallet_payment(self, order: PaySymbolOrder, wallet: PayWallet) -> PaySymbolOrder:
+        """
+        Xử lý thanh toán ví ngay lập tức khi tạo đơn hàng
+        
+        Args:
+            order: PaySymbolOrder instance
+            wallet: PayWallet instance
+        
+        Returns:
+            PaySymbolOrder với trạng thái đã thanh toán
+        """
+        # Create ledger entry
+        ledger_entry = PayWalletLedger.objects.create(
+            wallet=wallet,
+            tx_type=WalletTxType.PURCHASE,
+            amount=order.total_amount,
+            is_credit=False,  # Debit (subtract from wallet)
+            balance_before=wallet.balance,
+            balance_after=wallet.balance - order.total_amount,
+            order_id=order.order_id,
+            note=f"Mua quyền truy cập symbol - Order {order.order_id}"
+        )
+        
+        # Update wallet balance
+        wallet.balance = ledger_entry.balance_after
+        wallet.save()
+        
+        # Update order status
+        order.status = OrderStatus.PAID
+        order.save()
+        
+        # Create licenses immediately
+        self._create_symbol_licenses(order)
+        
+        return order
+    
+    def create_sepay_topup_for_insufficient_order(self, order_id: str, user: User) -> Dict:
+        """
+        Tạo SePay QR để nạp tiền khi số dư không đủ thanh toán đơn hàng
+        
+        Args:
+            order_id: UUID của đơn hàng
+            user: User thực hiện nạp tiền
+        
+        Returns:
+            Dict với thông tin payment intent và QR code
+        """
+        try:
+            # Get order
+            order = PaySymbolOrder.objects.get(order_id=order_id, user=user)
+            
+            if order.status != OrderStatus.PENDING_PAYMENT:
+                raise ValueError(f"Order status is {order.status}, cannot create top-up")
+            
+            if order.payment_method != PaymentMethod.WALLET:
+                raise ValueError(f"Order payment method is {order.payment_method}, must be wallet for top-up")
+            
+            # Get current wallet balance
+            wallet = PayWallet.objects.get(user=user)
+            required_amount = order.total_amount - wallet.balance
+            
+            if required_amount <= 0:
+                raise ValueError("Wallet balance is sufficient, no top-up needed")
+            
+            # Create payment intent for top-up using PaymentService
+            intent = self.payment_service.create_payment_intent(
+                user=user,
+                purpose=IntentPurpose.WALLET_TOPUP,
+                amount=required_amount,
+                currency="VND",
+                metadata={
+                    'order_id': str(order.order_id),
+                    'order_type': 'symbol_purchase_topup',
+                    'required_amount': float(required_amount),
+                    'current_balance': float(wallet.balance),
+                    'order_total': float(order.total_amount)
+                }
+            )
+            
+            # Link order to payment intent
+            order.payment_intent = intent
+            order.save()
+            
+            return {
+                'intent_id': str(intent.intent_id),
+                'order_code': intent.order_code,
+                'amount': required_amount,
+                'currency': 'VND',
+                'expires_at': intent.expires_at.isoformat() if intent.expires_at else None,
+                'qr_code_url': intent.qr_code_url,
+                'message': f"Tạo QR nạp thêm {required_amount:,.0f} VND để hoàn thành đơn hàng"
+            }
+            
+        except PaySymbolOrder.DoesNotExist:
+            raise ValueError("Order not found")
+        except PayWallet.DoesNotExist:
+            raise ValueError("User wallet not found")
     
     @transaction.atomic
     def process_wallet_payment(self, order_id: str, user: User) -> Dict:
         """
         Xử lý thanh toán bằng ví cho đơn hàng symbol
-        
-        Args:
-            order_id: UUID của đơn hàng
-            user: User thực hiện thanh toán
-        
-        Returns:
-            Dict với thông tin kết quả thanh toán
         """
         try:
             # Get order
@@ -111,10 +245,8 @@ class SymbolPurchaseService:
             if order.payment_method != PaymentMethod.WALLET:
                 raise ValueError(f"Order payment method is {order.payment_method}, not wallet")
             
-            # Get user wallet
             wallet = PayWallet.objects.get(user=user)
             
-            # Check balance
             if wallet.balance < order.total_amount:
                 raise ValueError(
                     f"Insufficient balance. Required: {order.total_amount}, "
@@ -179,11 +311,12 @@ class SymbolPurchaseService:
             if order.payment_method != PaymentMethod.SEPAY_TRANSFER:
                 raise ValueError(f"Order payment method is {order.payment_method}, not sepay_transfer")
             
-            # Create payment intent
-            intent_result = self.wallet_service.create_payment_intent(
+            # Create payment intent using PaymentService
+            intent = self.payment_service.create_payment_intent(
                 user=user,
-                amount=order.total_amount,
                 purpose=IntentPurpose.ORDER_PAYMENT,
+                amount=order.total_amount,
+                currency="VND",
                 metadata={
                     'order_id': str(order.order_id),
                     'order_type': 'symbol_purchase',
@@ -192,11 +325,14 @@ class SymbolPurchaseService:
             )
             
             # Link order to payment intent
-            intent = PayPaymentIntent.objects.get(intent_id=intent_result['intent_id'])
             order.payment_intent = intent
             order.save()
             
-            return intent_result
+            return {
+                'intent_id': str(intent.intent_id),
+                'qr_code_url': intent.qr_code_url,
+                'deep_link': intent.deep_link
+            }
             
         except PaySymbolOrder.DoesNotExist:
             raise ValueError("Order not found")
@@ -204,6 +340,8 @@ class SymbolPurchaseService:
     def process_sepay_payment_completion(self, payment_id: str) -> Dict:
         """
         Xử lý hoàn tất thanh toán SePay cho đơn hàng symbol
+        - Nếu là nạp ví để mua symbol: nạp tiền + tự động thanh toán đơn hàng
+        - Nếu là thanh toán trực tiếp: tạo license
         
         Args:
             payment_id: UUID của payment đã hoàn thành
@@ -217,6 +355,17 @@ class SymbolPurchaseService:
             # Get payment
             payment = PayPayment.objects.get(payment_id=payment_id)
             
+            # Check if this is wallet topup for order
+            intent = payment.intent
+            if intent and intent.purpose == IntentPurpose.WALLET_TOPUP:
+                metadata = intent.metadata or {}
+                order_id = metadata.get('order_id')
+                
+                if order_id:
+                    # This is topup for insufficient order - process auto payment
+                    return self._process_topup_and_auto_payment(payment, order_id)
+            
+            # Regular order payment processing
             if not payment.order_id:
                 raise ValueError("Payment is not linked to any order")
             
@@ -247,6 +396,75 @@ class SymbolPurchaseService:
             
         except (PayPayment.DoesNotExist, PaySymbolOrder.DoesNotExist):
             raise ValueError("Payment or order not found")
+    
+    @transaction.atomic
+    def _process_topup_and_auto_payment(self, payment, order_id: str) -> Dict:
+        """
+        Xử lý nạp tiền và tự động thanh toán đơn hàng
+        
+        Args:
+            payment: PayPayment instance của SePay
+            order_id: UUID của đơn hàng cần thanh toán
+        
+        Returns:
+            Dict với thông tin kết quả
+        """
+        try:
+            # Get order
+            order = PaySymbolOrder.objects.get(order_id=order_id)
+            user = order.user
+            
+            # Get wallet (topup should have already been processed by webhook)
+            wallet = PayWallet.objects.get(user=user)
+            
+            # Check if wallet now has sufficient balance
+            if wallet.balance < order.total_amount:
+                return {
+                    'success': False,
+                    'message': f'Wallet balance still insufficient after topup. Required: {order.total_amount}, Available: {wallet.balance}',
+                    'order_id': str(order.order_id),
+                    'topup_amount': float(payment.amount),
+                    'current_balance': float(wallet.balance)
+                }
+            
+            # Process automatic payment
+            ledger_entry = PayWalletLedger.objects.create(
+                wallet=wallet,
+                tx_type=WalletTxType.PURCHASE,
+                amount=order.total_amount,
+                is_credit=False,  # Debit
+                balance_before=wallet.balance,
+                balance_after=wallet.balance - order.total_amount,
+                order_id=order.order_id,
+                note=f"Auto-payment after topup - Order {order.order_id}"
+            )
+            
+            # Update wallet balance
+            wallet.balance = ledger_entry.balance_after
+            wallet.save()
+            
+            # Update order status
+            order.status = OrderStatus.PAID
+            order.save()
+            
+            # Create licenses
+            licenses_created = self._create_symbol_licenses(order)
+            
+            return {
+                'success': True,
+                'message': 'Topup completed and order automatically paid',
+                'order_id': str(order.order_id),
+                'topup_amount': float(payment.amount),
+                'order_amount': float(order.total_amount),
+                'wallet_balance_after': float(wallet.balance),
+                'licenses_created': licenses_created,
+                'auto_payment': True
+            }
+            
+        except PaySymbolOrder.DoesNotExist:
+            raise ValueError("Order not found")
+        except PayWallet.DoesNotExist:
+            raise ValueError("User wallet not found")
     
     def _create_symbol_licenses(self, order: PaySymbolOrder) -> int:
         """
@@ -379,6 +597,11 @@ class SymbolPurchaseService:
         
         license_list = []
         for license in licenses[offset:offset + limit]:
+            # Check if license is active (not expired)
+            now = timezone.now()
+            is_active = (license.status == LicenseStatus.ACTIVE and 
+                        (license.end_at is None or license.end_at > now))
+            
             license_list.append({
                 'license_id': str(license.license_id),
                 'symbol_id': license.symbol_id,
@@ -386,6 +609,7 @@ class SymbolPurchaseService:
                 'start_at': license.start_at.isoformat(),
                 'end_at': license.end_at.isoformat() if license.end_at else None,
                 'is_lifetime': license.end_at is None,
+                'is_active': is_active,
                 'order_id': str(license.order_id) if license.order_id else None,
                 'created_at': license.created_at.isoformat()
             })

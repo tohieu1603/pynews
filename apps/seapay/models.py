@@ -300,6 +300,16 @@ class PayPaymentIntent(models.Model):
         blank=True,
         db_comment="Hạn sử dụng intent/QR"
     )
+    qr_code_url = models.TextField(
+        null=True,
+        blank=True,
+        db_comment="QR code URL for payment"
+    )
+    deep_link = models.TextField(
+        null=True,
+        blank=True,
+        db_comment="Deep link for mobile payment"
+    )
     metadata = models.JSONField(
         default=dict,
         blank=True,

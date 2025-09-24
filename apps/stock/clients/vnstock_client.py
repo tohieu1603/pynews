@@ -97,7 +97,6 @@ class VNStockClient:
         df = listing.symbols_by_exchange()
         exch = (exchange or "HSX").upper()
         df = df[df["exchange"] == exch]
-        df = df[df["symbol"].str.fullmatch(r"[A-Za-z]+", na=False)]
 
         for _, row in df.iterrows():
             yield str(row.get("symbol")), str(row.get("exchange"))
@@ -122,7 +121,7 @@ class VNStockClient:
                     "shareholders_df": self._fetch_shareholders(symbol, vn_company_vci, vn_company_tcbs),
                     "industries_icb_df": listing.industries_icb(),
                     "symbols_by_industries_df": listing.symbols_by_industries(),
-                    "news_df": self._df_or_empty(vn_company_tcbs.news()),
+                    "news_df": self._df_or_empty(vn_company_vci.news()),
                     "officers_df": self._df_or_empty(vn_company_vci.officers()),
                     "events_df": self._df_or_empty(vn_company_vci.events()),
                     "subsidiaries": self._df_or_empty(vn_company_tcbs.subsidiaries()),
@@ -166,7 +165,7 @@ class VNStockClient:
                 except Exception:
                     profile_df = pd.DataFrame()
                 try:
-                    news_df = self._df_or_empty(vn_company_tcbs.news())
+                    news_df = self._df_or_empty(vn_company_vci.news())
                 except Exception:
                     news_df = pd.DataFrame()
                 try:

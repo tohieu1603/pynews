@@ -46,10 +46,9 @@ class PaymentRepository:
         metadata: dict = None
     ) -> PayPaymentIntent:
         """Tạo payment intent mới"""
-        return PayPaymentIntent.objects.create(
+        # Tạo intent với QR code URL
+        intent = PayPaymentIntent.objects.create(
             user=user,
-            wallet=wallet,
-            provider=provider,
             purpose=purpose,
             amount=amount,
             order_code=order_code,
@@ -58,6 +57,27 @@ class PaymentRepository:
             expires_at=expires_at,
             metadata=metadata or {}
         )
+        
+        # Generate QR code URL
+        intent.qr_code_url = (
+            f"https://qr.sepay.vn/img?acc=96247CISI1"
+            f"&bank=BIDV"
+            f"&amount={int(amount)}"
+            f"&des={order_code}"
+            f"&template=compact"
+        )
+        
+        # Generate deep link
+        intent.deep_link = (
+            f"https://sepay.vn/payment?acc=96247CISI1"
+            f"&bank=BIDV"
+            f"&amount={int(amount)}"
+            f"&des={order_code}"
+        )
+        
+        intent.save()
+        
+        return intent
     
     @staticmethod
     def get_payment_intent_by_order_code(order_code: str) -> Optional[PayPaymentIntent]:

@@ -53,12 +53,16 @@ class SymbolService:
     def _fetch_officers_df(self, symbol_name: str) -> pd.DataFrame:
         """Delegate to fetch service."""
         return self.fetch_service.fetch_officers_df(symbol_name)
-
+    def _fetch_news_df(self, symbol_name: str) -> pd.DataFrame:
+        """Delegate to fetch service."""
+        return self.fetch_service.fetch_news_df(symbol_name)
     def _build_shareholder_rows(self, company_obj, df: pd.DataFrame) -> List[Dict]:
         return DataMappers.build_shareholder_rows(company_obj, df)
 
     def _build_event_rows(self, df: pd.DataFrame) -> List[Dict]:
         return DataMappers.map_events(df)
+    def _build_news_rows(self, df: pd.DataFrame) -> List[Dict]:
+        return DataMappers.map_news(df)
 
     def _build_officer_rows(self, df: pd.DataFrame) -> List[Dict]:
         return DataMappers.map_officers(df)

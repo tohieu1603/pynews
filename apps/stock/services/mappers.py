@@ -38,13 +38,14 @@ class DataMappers:
             return []
         rows = []
         for _, r in df.iterrows():
+           
             rows.append(
                 {
-                    "title": safe_str(r.get("news_title", "No Title")),
-                    "news_image_url": safe_str(r.get("news_image_url")),
-                    "news_source_link": safe_str(r.get("news_source_link")),
-                    "price_change_pct": safe_decimal(r.get("price_change_pct"), None),
-                    "public_date": to_epoch_seconds(r.get("public_date")),
+                    "title": r.get("news_title", "No Title"),
+                    "news_image_url": r.get("news_image_url"),
+                    "news_source_link": r.get("news_source_link"),
+                    "price_change_pct": r.get("price_change_pct"),
+                    "public_date": r.get("public_date"),
                 }
             )
         return rows

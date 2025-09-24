@@ -216,6 +216,10 @@ class CreateSymbolOrderResponse(Schema):
     items: List[SymbolOrderItemResponse]
     created_at: str
     message: str
+    # Optional payment intent info for SePay orders
+    payment_intent_id: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    deep_link: Optional[str] = None
 
 
 class ProcessWalletPaymentResponse(Schema):
