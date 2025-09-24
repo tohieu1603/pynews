@@ -36,16 +36,34 @@ class DataMappers:
         """Map news DataFrame to list of dicts"""
         if df is None or df.empty:
             return []
-        rows = []
-        for _, r in df.iterrows():
-           
+
+        # DataFrame.applymap is deprecated in pandas 3.x; DataFrame.map is the
+        # new element-wise helper. We normalise NaN/NaT values here before
+        # iterating to avoid passing them to Django model fields.
+        clean_df = df.map(lambda value: None if pd.isna(value) else value)
+
+        rows: List[Dict] = []
+        for _, r in clean_df.iterrows():
+            raw_public_date = r.get("public_date")
+
+            if isinstance(raw_public_date, pd.Timestamp):
+                public_date = safe_int(raw_public_date.timestamp(), None)
+            else:
+                # Values coming from vnstock are epoch milliseconds. Convert to
+                # seconds when the magnitude suggests milliseconds.
+                if isinstance(raw_public_date, (int, float)):
+                    public_date_candidate = raw_public_date / 1000 if raw_public_date and raw_public_date > 1e12 else raw_public_date
+                    public_date = safe_int(public_date_candidate, None)
+                else:
+                    public_date = safe_int(to_epoch_seconds(raw_public_date), None)
+
             rows.append(
                 {
-                    "title": r.get("news_title", "No Title"),
-                    "news_image_url": r.get("news_image_url"),
-                    "news_source_link": r.get("news_source_link"),
-                    "price_change_pct": r.get("price_change_pct"),
-                    "public_date": r.get("public_date"),
+                    "title": safe_str(r.get("news_title", "No Title")),
+                    "news_image_url": safe_str(r.get("news_image_url"), None),
+                    "news_source_link": safe_str(r.get("news_source_link"), None),
+                    "price_change_pct": safe_decimal(r.get("price_change_pct"), None),
+                    "public_date": public_date,
                 }
             )
         return rows

@@ -1,6 +1,32 @@
-from typing import Dict, Iterable, Optional
+import math
+from typing import Any, Dict, Iterable, Optional
 from django.db.models import QuerySet, Prefetch
 from apps.stock.models import Industry, ShareHolder, Symbol, Company, News, Officers, Events, SubCompany
+from apps.stock.utils.safe import to_epoch_seconds
+
+
+def _normalize_public_date(value: Any) -> Optional[int]:
+    """Convert various epoch formats to seconds while tolerating NaN values."""
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        seconds = value / 1000 if value > 1e12 else value
+        try:
+            return int(seconds)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    # Attempt best-effort conversion for datetime/string inputs.
+    try:
+        fallback = to_epoch_seconds(value)
+        if fallback is None:
+            return None
+        return int(fallback)
+    except Exception:
+        return None
 
 
 def get_or_create_industry(name: Optional[str]) -> Industry:
@@ -59,11 +85,8 @@ def upsert_shareholders(company: Company, rows: Iterable[Dict]) -> None:
 def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
     for r in rows:
         print("DEBUG ROW:", r)  # xem thực tế dict có key gì
-
-        public_date = r.get("public_date")
-        if public_date:
-            # Nếu DB đang là bigint
-            public_date = int(public_date / 1000)
+        public_date = _normalize_public_date(r.get("public_date"))
+        price_change_pct = safe_decimal(r.get("price_change_pct"), None)
 
         News.objects.update_or_create(
             title=(r.get("title") or "").strip(),
@@ -72,7 +95,7 @@ def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
                 "news_image_url": r.get("news_image_url"),
                 "news_source_link": r.get("news_source_link"),
                 "public_date": public_date,
-                "price_change_pct": r.get("price_change_pct"),
+                "price_change_pct": price_change_pct,
             }
         )
 
@@ -184,16 +207,28 @@ def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, ow
     sub_company.save()
 
 def safe_int(val, default=0):
+    if val is None:
+        return default
+    if isinstance(val, float) and math.isnan(val):
+        return default
     try:
         return int(val)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 def safe_decimal(val, default=0.0):
+    if val is None:
+        return default
+    if isinstance(val, float) and math.isnan(val):
+        return default
     try:
         return float(val)
     except (TypeError, ValueError):
         return default
 
 def safe_str(val, default=""):
-    return str(val).strip() if val is not None else default
+    if val is None:
+        return default
+    if isinstance(val, float) and math.isnan(val):
+        return default
+    return str(val).strip()
