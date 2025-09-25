@@ -3,7 +3,6 @@ from typing import List, Optional
 from datetime import datetime
 
 
-# ---- Shareholder ----
 class ShareHolderOut(Schema):
     id: int
     share_holder: Optional[str] = None
@@ -12,17 +11,15 @@ class ShareHolderOut(Schema):
     update_date: Optional[datetime] = None
 
 
-# ---- News ----
 class NewsOut(Schema):
     id: int
     title: Optional[str] = None
-    news_image_url: Optional[str] = None   # sửa cho khớp với model
-    news_source_link: Optional[str] = None # sửa cho khớp với model
+    news_image_url: Optional[str] = None   
+    news_source_link: Optional[str] = None 
     price_change_pct: Optional[float] = None
-    public_date: Optional[int] = None  # model lưu epoch (BigIntegerField)
+    public_date: Optional[int] = None  
 
 
-# ---- Events ----
 class EventsOut(Schema):
     id: int
     event_title: Optional[str] = None
@@ -31,7 +28,6 @@ class EventsOut(Schema):
     source_url: Optional[str] = None
 
 
-# ---- Officers ----
 class OfficersOut(Schema):
     id: int
     officer_name: Optional[str] = None
@@ -41,14 +37,12 @@ class OfficersOut(Schema):
     updated_at: Optional[datetime] = None
 
 
-# ---- SubCompany ----
 class SubCompanyOut(Schema):
     id: int
     company_name: Optional[str] = None
     sub_own_percent: Optional[float] = None
 
 
-# ---- Company ----
 class CompanyOut(Schema):
     id: int
     company_name: str
@@ -71,14 +65,12 @@ class CompanyOut(Schema):
     subsidiaries: List[SubCompanyOut] = []
 
 
-# ---- Industry (ref) ----
 class IndustryRefOut(Schema):
     id: int
     name: str
     updated_at: Optional[datetime] = None
 
 
-# ---- Symbol ----
 class SymbolOut(Schema):
     id: int
     name: str
@@ -92,9 +84,8 @@ class SymbolList(Schema):
     exchange: str
     updated_at: datetime
 
-# ---- Industry ----
 class IndustryOut(Schema):
     id: int
     name: str
     updated_at: Optional[datetime] = None
-    companies: List[CompanyOut] = []   # model có related_name='companies'
+    companies: List[CompanyOut] = []   

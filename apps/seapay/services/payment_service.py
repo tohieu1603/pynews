@@ -109,7 +109,6 @@ class PaymentService:
                 raise HttpError(400, f"Amount mismatch. Expected: {intent.amount}, Received: {amount}")
         
         if intent.status not in ['requires_payment_method', 'pending_payment']:
-            # Intent đã processed, nhưng vẫn cần check order status
             if intent.status == 'succeeded' and intent.purpose == 'order_payment':
                 self._ensure_order_status_synced(intent)
             return {"message": "Already processed", "intent_id": str(intent.intent_id), "status": intent.status}
@@ -143,14 +142,11 @@ class PaymentService:
                 print(f"Updated wallet {intent.wallet.id} balance: +{intent.amount}, new balance: {intent.wallet.balance}")
         
         elif intent.purpose == 'order_payment':
-            # Xử lý thanh toán đơn hàng symbol
             self._process_symbol_order_payment(intent)
             
         elif intent.purpose == 'withdraw':
-            # Xử lý rút tiền
             pass
         
-        # Get wallet balance if available
         wallet_balance = None
         if hasattr(intent, 'wallet') and intent.wallet:
             wallet_balance = float(intent.wallet.balance)
@@ -172,7 +168,6 @@ class PaymentService:
         from apps.seapay.models import PaySymbolOrder
         
         try:
-            # Tìm symbol order dựa trên payment intent
             order = PaySymbolOrder.objects.filter(
                 payment_intent_id=intent.intent_id
             ).first()
@@ -183,7 +178,7 @@ class PaymentService:
                 
                 self._create_symbol_licenses(order)
                 
-                print(f"✅ Symbol order {order.order_id} marked as paid and licenses created")
+                print(f"Symbol order {order.order_id} marked as paid and licenses created")
             else:
                 print(f"⚠️ No symbol order found for payment intent {intent.intent_id}")
                 
@@ -197,7 +192,6 @@ class PaymentService:
         import uuid
         
         for item in order.items.all():
-            # Calculate end date
             license_days = item.license_days or 30
             end_at = timezone.now() + timezone.timedelta(days=license_days)
             

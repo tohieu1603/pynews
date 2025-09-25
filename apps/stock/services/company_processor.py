@@ -64,7 +64,7 @@ class CompanyProcessor:
                     company, DataMappers.map_shareholders(shareholders_df)
                 )
             news_df = bundle.get("news_df")
-            print(news_df)
+
             if news_df is not None and not news_df.empty:
                 repo.upsert_news(
                     company, DataMappers.map_news(news_df)

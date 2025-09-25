@@ -87,7 +87,6 @@ class SymbolService:
         try:
             db_symbols = list(repo.qs_all_symbols())
             if not db_symbols or all(not safe_str(s.name) for s in db_symbols):
-                print("Symbols table empty. Seeding from vnstock...")
                 seeded = 0
                 for symbol_name, exchange in self.vn_client.iter_all_symbols(exchange="HSX"):
                     repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})

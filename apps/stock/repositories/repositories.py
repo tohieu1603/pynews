@@ -84,7 +84,7 @@ def upsert_shareholders(company: Company, rows: Iterable[Dict]) -> None:
 
 def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
     for r in rows:
-        print("DEBUG ROW:", r)  # xem thực tế dict có key gì
+      
         public_date = _normalize_public_date(r.get("public_date"))
         price_change_pct = safe_decimal(r.get("price_change_pct"), None)
 

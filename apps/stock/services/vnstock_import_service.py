@@ -230,7 +230,6 @@ class VnstockImportService:
                     print(f"Error processing symbol {symbol.name}: {e}")
                     continue
                 
-                # Sleep để tránh rate limit
                 if self.per_symbol_sleep > 0:
                     time.sleep(self.per_symbol_sleep)
             
@@ -246,7 +245,6 @@ class VnstockImportService:
         try:
             from apps.stock.clients.vnstock_client import VNStockClient
             
-            # Sử dụng VNStockClient để lấy bundle data
             client = VNStockClient()
             bundle, ok = client.fetch_company_bundle_safe(symbol)
             
@@ -254,7 +252,6 @@ class VnstockImportService:
                 print(f"Failed to fetch bundle for {symbol}")
                 return None
             
-            # Lấy data từ profile_df (TCBS)
             profile_df = bundle.get("profile_df")
             company_name = (
                 safe_str(profile_df.iloc[0].get("company_name"))
@@ -262,7 +259,6 @@ class VnstockImportService:
                 else symbol
             )
             
-            # Lấy overview data từ TCBS trước, fallback VCI
             overview_df = bundle.get("overview_df_TCBS")
             if overview_df is None or overview_df.empty:
                 overview_df = bundle.get("overview_df_VCI")
@@ -273,7 +269,6 @@ class VnstockImportService:
             
             overview_data = overview_df.iloc[0]
             
-            # Lấy VCI specific data
             overview_df_vci = bundle.get("overview_df_VCI")
             if overview_df_vci is not None and not overview_df_vci.empty:
                 vci_data = overview_df_vci.iloc[0]
@@ -287,7 +282,6 @@ class VnstockImportService:
                 fin_ratio_share = None
                 charter_cap = None
             
-            # Tạo company_info với data từ cả TCBS và VCI
             company_info = {
                 'company_name': company_name,
                 'company_profile': company_profile,

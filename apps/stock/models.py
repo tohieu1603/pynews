@@ -12,15 +12,6 @@ class Industry(models.Model):
 class Company(models.Model):
     company_name = models.CharField(max_length=255, unique=True)
     company_profile = models.TextField(null=True, blank=True)
-   # sub_own_percent = models.FloatField(null=True, blank=True)
-    # parent = models.ForeignKey(
-    #     'self',
-    #     on_delete=models.CASCADE,
-    #     null=True,
-    #     blank=True,
-    #     related_name='subsidiaries'
-    # )
-   # sub_own_percent = models.FloatField(null=True, blank=True)
     history = models.TextField(null=True, blank=True)
     issue_share = models.BigIntegerField(null=True, blank=True)
     financial_ratio_issue_share = models.BigIntegerField(null=True, blank=True)
