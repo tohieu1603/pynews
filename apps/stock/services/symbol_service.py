@@ -1,11 +1,11 @@
 import time
 from typing import Any, Dict, List, Optional
-
+from django.http import Http404
 import pandas as pd
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from vnstock import Listing
-
+from ninja.errors import HttpError
 from apps.stock.clients.vnstock_client import VNStockClient
 from apps.stock.models import Symbol, Events
 from apps.stock.repositories import repositories as repo
@@ -345,3 +345,19 @@ class SymbolService:
             "industries": industries,
             "company": company_payload,
         }
+
+    def get_symbol_payload_by_name(self, symbol_name: str) -> Dict[str, Any]:
+        symbol_key = symbol_name.strip()
+        if not symbol_key:
+            raise HttpError(400, "Symbol name cannot be empty")
+
+        symbol_obj = repo.qs_symbol_name(symbol_key).first()
+        if not symbol_obj:
+            raise HttpError(404, "Symbol not found")
+
+        return {
+            "id": symbol_obj.id,
+            "name": symbol_obj.name,
+            "exchange": symbol_obj.exchange,
+        }
+

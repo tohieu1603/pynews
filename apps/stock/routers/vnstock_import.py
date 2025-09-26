@@ -3,8 +3,9 @@
 
 from typing import Dict, Any
 from ninja import Router, Query
+from ninja.errors import HttpError
 from ninja.pagination import paginate, PageNumberPagination
-from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList, SubCompanyOut
+from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList, SubCompanyOut, SymbolOutBasic
 from apps.stock.services.symbol_service import SymbolService
 from typing import List
 from apps.stock.services.vnstock_import_service import VnstockImportService
@@ -88,28 +89,11 @@ def list_symbols_with_basic_info(request, limit: int = 10):
     return service.get_symbols(limit=limit)
 
 
-@router.get("/symbols/search")
-def search_symbols_by_name(request, q: str = "", limit: int = 10):
-    """Tìm kiếm symbols theo tên (pattern matching)"""
-    from apps.stock.models import Symbol
-    from apps.stock.schemas import SymbolList
-    from apps.stock.utils.safe import to_datetime
-    
-    symbols = Symbol.objects.filter(
-        name__icontains=q.upper()
-    ).select_related('company')[:limit]
-    
-    return [
-        SymbolList(
-            id=s.id,
-            name=s.name,
-            full_name=s.full_name or "",
-            exchange=s.exchange,
-            company_name=s.company.company_name if s.company else "",
-            updated_at=to_datetime(s.updated_at),
-        )
-        for s in symbols
-    ]
+@router.get("/symbols/by-name/{symbol_name}", response=SymbolOutBasic)
+def get_symbol_by_name(request, symbol_name: str):
+    """Lấy thông tin symbol theo mã giao dịch (ví dụ: VCS)."""
+    service = SymbolService()
+    return service.get_symbol_payload_by_name(symbol_name.upper())
 
 
 @router.get("/stats")

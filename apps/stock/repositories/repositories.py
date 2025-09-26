@@ -193,6 +193,8 @@ def qs_symbols_with_industries() -> QuerySet[Symbol]:
             "company__id", "company__company_name", "company__updated_at"
         )
     )
+def qs_symbol_name(symbol_name):
+    return Symbol.objects.filter(name__iexact = symbol_name).only('id','name', 'exchange')
 
 def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, own_percent: Optional[float]) -> None:
     """
