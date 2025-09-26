@@ -19,3 +19,7 @@ AUTH_PASSWORD_VALIDATORS = []
 # Keep DEBUG on for clearer tracebacks in tests
 DEBUG = True
 
+# Simplify CORS configuration for tests
+CORS_ALLOWED_ORIGINS = []
+
+ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]

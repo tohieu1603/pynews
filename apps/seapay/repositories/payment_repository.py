@@ -110,11 +110,14 @@ class PaymentRepository:
     ) -> None:
         """Cập nhật status của payment intent"""
         intent.status = status
+        update_fields = ['status', 'updated_at']
         if reference_code:
+            intent.reference_code = reference_code
             metadata = intent.metadata or {}
             metadata['reference_code'] = reference_code
             intent.metadata = metadata
-        intent.save(update_fields=['status', 'metadata', 'updated_at'])
+            update_fields.extend(['reference_code', 'metadata'])
+        intent.save(update_fields=update_fields)
     
     @staticmethod
     def get_or_create_legacy_order(order_id: str, amount: Decimal, description: str = "") -> tuple[SeapayOrder, bool]:

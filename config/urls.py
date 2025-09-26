@@ -8,4 +8,5 @@ urlpatterns = [
     path("api/", api.urls),  
     path("login/", oauth_callback, name="oauth_callback"),
     path("api/auth/google/callback", oauth_callback, name="google_oauth_callback"),
+    
 ]

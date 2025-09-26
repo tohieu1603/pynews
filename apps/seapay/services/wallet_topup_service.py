@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 import secrets
 from typing import Dict, Any, Optional
 from decimal import Decimal
@@ -19,7 +19,7 @@ User = get_user_model()
 
 
 class WalletTopupService:
-    """Service để xử lý luồng nạp tiền ví hoàn chỉnh"""
+    """Service Ä‘á»ƒ xá»­ lÃ½ luá»“ng náº¡p tiá»n vÃ­ hoÃ n chá»‰nh"""
     
     def __init__(self):
         self.sepay_client = SepayClient()
@@ -34,28 +34,28 @@ class WalletTopupService:
         metadata: Optional[Dict[str, Any]] = None
     ) -> PayPaymentIntent:
         """
-        Bước 1: Tạo payment intent cho nạp ví
+        BÆ°á»›c 1: Táº¡o payment intent cho náº¡p vÃ­
         """
         if amount <= 0:
             raise ValueError("Amount must be greater than 0")
         
-        # Lấy hoặc tạo ví cho user
+        # Láº¥y hoáº·c táº¡o vÃ­ cho user
         wallet, _ = self._get_or_create_wallet(user, currency)
         
         if not wallet.is_active:
             raise ValueError("Wallet is suspended")
         
-        # Tạo order_code duy nhất cho đối soát
+        # Táº¡o order_code duy nháº¥t cho Ä‘á»‘i soÃ¡t
         order_code = self._generate_order_code()
         
-        # Tính thời gian hết hạn
+        # TÃ­nh thá»i gian háº¿t háº¡n
         expires_at = timezone.now() + timedelta(minutes=expires_in_minutes)
         
-        # Tạo intent
+        # Táº¡o intent
         with transaction.atomic():
             intent = PayPaymentIntent.objects.create(
                 user=user,
-                order=None,  # Wallet topup không có order
+                order=None,  # Wallet topup khÃ´ng cÃ³ order
                 purpose=IntentPurpose.WALLET_TOPUP,
                 amount=amount,
                 status=PaymentStatus.REQUIRES_PAYMENT_METHOD,
@@ -72,25 +72,25 @@ class WalletTopupService:
         bank_code: str = "BIDV"
     ) -> PayPaymentAttempt:
         """
-        Bước 2: Tạo attempt và sinh QR code
+        BÆ°á»›c 2: Táº¡o attempt vÃ  sinh QR code
         """
         if intent.purpose != IntentPurpose.WALLET_TOPUP:
             raise ValueError("Intent is not for wallet topup")
         
-        if intent.is_expired:
+        if intent.is_expired():
             raise ValueError("Intent has expired")
         
         if intent.status != PaymentStatus.REQUIRES_PAYMENT_METHOD:
             raise ValueError("Intent is not in correct status for creating attempt")
         
-        # Tạo QR code qua SePay
+        # Táº¡o QR code qua SePay
         qr_data = self.sepay_client.create_qr_code(
             amount=intent.amount,
             content=intent.order_code,
             bank_code=bank_code
         )
         
-        # Tạo attempt
+        # Táº¡o attempt
         with transaction.atomic():
             attempt = PayPaymentAttempt.objects.create(
                 intent=intent,
@@ -110,7 +110,7 @@ class WalletTopupService:
                 }
             )
             
-            # Cập nhật intent status
+            # Cáº­p nháº­t intent status
             intent.status = PaymentStatus.PROCESSING
             intent.save(update_fields=['status', 'updated_at'])
         
@@ -118,27 +118,27 @@ class WalletTopupService:
     
     def process_webhook_event(self, webhook_payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Bước 3: Xử lý webhook từ SePay
+        BÆ°á»›c 3: Xá»­ lÃ½ webhook tá»« SePay
         """
         sepay_tx_id = webhook_payload.get('id')
         if not sepay_tx_id:
             raise ValueError("Missing sepay transaction id in webhook")
         
-        # Lưu webhook event thô trước
+        # LÆ°u webhook event thÃ´ trÆ°á»›c
         webhook_event = self._store_webhook_event(sepay_tx_id, webhook_payload)
         
         try:
-            # Xử lý webhook
+            # Xá»­ lÃ½ webhook
             result = self._process_webhook_data(webhook_payload)
             
-            # Đánh dấu đã xử lý thành công
+            # ÄÃ¡nh dáº¥u Ä‘Ã£ xá»­ lÃ½ thÃ nh cÃ´ng
             webhook_event.processed = True
             webhook_event.save(update_fields=['processed'])
             
             return result
             
         except Exception as e:
-            # Lưu lỗi để debug
+            # LÆ°u lá»—i Ä‘á»ƒ debug
             webhook_event.process_error = str(e)
             webhook_event.save(update_fields=['process_error'])
             raise
@@ -149,29 +149,29 @@ class WalletTopupService:
         transaction_data: Dict[str, Any]
     ) -> Optional[PayPayment]:
         """
-        Bước 4: Đối soát và tạo payment
+        BÆ°á»›c 4: Äá»‘i soÃ¡t vÃ  táº¡o payment
         """
-        # Lưu bank transaction
+        # LÆ°u bank transaction
         bank_tx = self._store_bank_transaction(sepay_tx_id, transaction_data)
         
-        # Tìm intent dựa trên content
+        # TÃ¬m intent dá»±a trÃªn content
         content = transaction_data.get('content', '')
         intent = self._find_intent_by_content(content)
         
         if not intent:
-            # Không tìm thấy intent phù hợp
+            # KhÃ´ng tÃ¬m tháº¥y intent phÃ¹ há»£p
             return None
         
-        # Kiểm tra số tiền
+        # Kiá»ƒm tra sá»‘ tiá»n
         amount = Decimal(str(transaction_data.get('transferAmount', 0)))
         if amount != intent.amount:
             print(f"Amount mismatch for intent {intent.intent_id}: expected {intent.amount}, got {amount}")
             return None
         
-        # Tạo payment
+        # Táº¡o payment
         payment = self._create_payment(intent, bank_tx, amount)
         
-        # Cập nhật liên kết
+        # Cáº­p nháº­t liÃªn káº¿t
         bank_tx.intent = intent
         bank_tx.payment = payment
         bank_tx.save(update_fields=['intent', 'payment'])
@@ -180,7 +180,7 @@ class WalletTopupService:
     
     def finalize_topup(self, payment: PayPayment) -> PayWalletLedger:
         """
-        Bước 5: Chốt thanh toán và ghi ledger
+        BÆ°á»›c 5: Chá»‘t thanh toÃ¡n vÃ  ghi ledger
         """
         if payment.status != PaymentStatus.SUCCEEDED:
             raise ValueError("Payment is not in succeeded status")
@@ -189,10 +189,10 @@ class WalletTopupService:
         if not intent or intent.purpose != IntentPurpose.WALLET_TOPUP:
             raise ValueError("Invalid payment intent for wallet topup")
         
-        # Lấy ví của user
+        # Láº¥y vÃ­ cá»§a user
         wallet = self._get_or_create_wallet(payment.user)[0]
         
-        # Ghi ledger và cập nhật số dư
+        # Ghi ledger vÃ  cáº­p nháº­t sá»‘ dÆ°
         with transaction.atomic():
             ledger_entry = self._create_ledger_entry(
                 wallet=wallet,
@@ -203,18 +203,18 @@ class WalletTopupService:
                 description=f"Wallet topup via SePay - {payment.provider_payment_id}"
             )
             
-            # Cập nhật cache số dư trong wallet
+            # Cáº­p nháº­t cache sá»‘ dÆ° trong wallet
             wallet.balance = ledger_entry.balance_after
             wallet.save(update_fields=['balance', 'updated_at'])
             
-            # Cập nhật intent status
+            # Cáº­p nháº­t intent status
             intent.status = PaymentStatus.SUCCEEDED
             intent.save(update_fields=['status', 'updated_at'])
         
         return ledger_entry
     
     def get_topup_status(self, intent_id: str, user) -> Dict[str, Any]:
-        """Lấy trạng thái nạp tiền"""
+        """Láº¥y tráº¡ng thÃ¡i náº¡p tiá»n"""
         try:
             intent = PayPaymentIntent.objects.get(
                 intent_id=intent_id, 
@@ -224,13 +224,13 @@ class WalletTopupService:
         except PayPaymentIntent.DoesNotExist:
             raise ValueError("Topup intent not found")
         
-        # Lấy attempt mới nhất
+        # Láº¥y attempt má»›i nháº¥t
         latest_attempt = intent.paypaymentattempt_set.order_by('-created_at').first()
         
-        # Lấy payment nếu có
+        # Láº¥y payment náº¿u cÃ³
         payment = intent.paypayment_set.filter(status=PaymentStatus.SUCCEEDED).first()
         
-        # Lấy ledger entry nếu có
+        # Láº¥y ledger entry náº¿u cÃ³
         ledger_entry = None
         if payment:
             ledger_entry = payment.ledger_entries.first()
@@ -242,7 +242,7 @@ class WalletTopupService:
                 'status': intent.status,
                 'order_code': intent.order_code,
                 'expires_at': intent.expires_at.isoformat() if intent.expires_at else None,
-                'is_expired': intent.is_expired,
+                'is_expired': intent.is_expired(),
                 'created_at': intent.created_at.isoformat()
             },
             'attempt': {
@@ -272,7 +272,7 @@ class WalletTopupService:
     # Private helper methods
     
     def _get_or_create_wallet(self, user, currency: str = "VND"):
-        """Lấy hoặc tạo ví cho user"""
+        """Láº¥y hoáº·c táº¡o vÃ­ cho user"""
         return PayWallet.objects.get_or_create(
             user=user,
             defaults={
@@ -283,13 +283,13 @@ class WalletTopupService:
         )
     
     def _generate_order_code(self) -> str:
-        """Sinh order_code duy nhất - format phù hợp với SePay"""
+        """Sinh order_code duy nháº¥t - format phÃ¹ há»£p vá»›i SePay"""
         timestamp = int(timezone.now().timestamp())
         random_suffix = secrets.token_hex(4).upper()
         return f"TOPUP{timestamp}{random_suffix}"
     
     def _store_webhook_event(self, sepay_tx_id: int, payload: Dict[str, Any]) -> PaySepayWebhookEvent:
-        """Lưu webhook event thô"""
+        """LÆ°u webhook event thÃ´"""
         webhook_event, _ = PaySepayWebhookEvent.objects.get_or_create(
             sepay_tx_id=sepay_tx_id,
             defaults={
@@ -300,15 +300,15 @@ class WalletTopupService:
         return webhook_event
     
     def _process_webhook_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Xử lý dữ liệu webhook"""
+        """Xá»­ lÃ½ dá»¯ liá»‡u webhook"""
         # Extract transaction info
         sepay_tx_id = payload.get('id')
         
-        # Tìm và xử lý transaction
+        # TÃ¬m vÃ  xá»­ lÃ½ transaction
         result = self.reconcile_bank_transaction(sepay_tx_id, payload)
         
         if result:
-            # Chốt thanh toán
+            # Chá»‘t thanh toÃ¡n
             self.finalize_topup(result)
             return {
                 'status': 'success',
@@ -322,7 +322,7 @@ class WalletTopupService:
             }
     
     def _store_bank_transaction(self, sepay_tx_id: int, data: Dict[str, Any]) -> PayBankTransaction:
-        """Lưu bank transaction data"""
+        """LÆ°u bank transaction data"""
         bank_tx, _ = PayBankTransaction.objects.get_or_create(
             sepay_tx_id=sepay_tx_id,
             defaults={
@@ -338,22 +338,22 @@ class WalletTopupService:
         return bank_tx
     
     def _find_intent_by_content(self, content: str) -> Optional[PayPaymentIntent]:
-        """Tìm intent dựa trên content - xử lý cả format có và không có dấu gạch dưới"""
+        """TÃ¬m intent dá»±a trÃªn content - xá»­ lÃ½ cáº£ format cÃ³ vÃ  khÃ´ng cÃ³ dáº¥u gáº¡ch dÆ°á»›i"""
         try:
-            # Thử tìm với order_code y hệt
+            # Thá»­ tÃ¬m vá»›i order_code y há»‡t
             return PayPaymentIntent.objects.get(
                 order_code=content,
                 purpose=IntentPurpose.WALLET_TOPUP,
                 status__in=[PaymentStatus.REQUIRES_PAYMENT_METHOD, PaymentStatus.PROCESSING]
             )
         except PayPaymentIntent.DoesNotExist:
-            # Thử tìm với format có dấu gạch dưới (backward compatibility)
+            # Thá»­ tÃ¬m vá»›i format cÃ³ dáº¥u gáº¡ch dÆ°á»›i (backward compatibility)
             if content.startswith('TOPUP') and '_' not in content:
                 # Convert TOPUP175851230913D20160 -> TOPUP_1758512309_13D20160
-                # Giả sử timestamp là 10 chữ số, random là phần còn lại
+                # Giáº£ sá»­ timestamp lÃ  10 chá»¯ sá»‘, random lÃ  pháº§n cÃ²n láº¡i
                 if len(content) > 15:  # TOPUP + 10 timestamp + random
-                    timestamp_part = content[5:15]  # Lấy 10 chữ số sau TOPUP
-                    random_part = content[15:]       # Phần còn lại
+                    timestamp_part = content[5:15]  # Láº¥y 10 chá»¯ sá»‘ sau TOPUP
+                    random_part = content[15:]       # Pháº§n cÃ²n láº¡i
                     legacy_format = f"TOPUP_{timestamp_part}_{random_part}"
                     
                     try:
@@ -368,7 +368,7 @@ class WalletTopupService:
             return None
     
     def _create_payment(self, intent: PayPaymentIntent, bank_tx: PayBankTransaction, amount: Decimal) -> PayPayment:
-        """Tạo payment record"""
+        """Táº¡o payment record"""
         payment = PayPayment.objects.create(
             user=intent.user,
             order=None, 
@@ -393,7 +393,7 @@ class WalletTopupService:
         payment: PayPayment = None,
         description: str = ""
     ) -> PayWalletLedger:
-        """Tạo ledger entry và tính số dư mới"""
+        """Táº¡o ledger entry vÃ  tÃ­nh sá»‘ dÆ° má»›i"""
         balance_before = wallet.balance
         
         if is_credit:

@@ -3,7 +3,7 @@
 Dự án phân tích chứng khoán sử dụng Django + Django Ninja với cơ sở dữ liệu PostgreSQL.
 
 ## 📋 Mục lục
-
+.\cloudflared.exe --config C:\Users\ADMIN\.cloudflared\config_payment.yaml tunnel run
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
 - [🧪 Hướng dẫn Test API với Postman](#hướng-dẫn-test-api-với-postman)

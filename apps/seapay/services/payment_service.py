@@ -1,23 +1,40 @@
+import logging
 import uuid
-from typing import Optional, Dict, Any
-from decimal import Decimal
+from datetime import timedelta
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, List, Optional
+
+import requests
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from datetime import timedelta
 from ninja.errors import HttpError
-from typing import List
+
+from apps.seapay.models import (
+    IntentPurpose,
+    OrderStatus,
+    PayPayment,
+    PayPaymentIntent,
+    PayWallet,
+    PaymentStatus,
+)
 from apps.seapay.repositories.payment_repository import PaymentRepository
-from apps.seapay.models import PayWallet, PayPaymentIntent, IntentPurpose
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class PaymentService:
-    """Service layer cho payment business logic"""
-    
-    def __init__(self):
-        self.repository = PaymentRepository()
-    
+    """Business logic for SePay payment intents and webhook processing."""
+
+    def __init__(
+        self,
+        repository: Optional[PaymentRepository] = None,
+        http_client=requests,
+    ) -> None:
+        self.repository = repository or PaymentRepository()
+        # Keep a reference for easy mocking in tests.
+        self._http_client = http_client
+
     def create_payment_intent(
         self,
         user: User,
@@ -27,244 +44,321 @@ class PaymentService:
         expires_in_minutes: int = 60,
         return_url: Optional[str] = None,
         cancel_url: Optional[str] = None,
-        metadata: Dict[str, Any] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> PayPaymentIntent:
-        """Tạo payment intent mới"""
-        
-        valid_purposes = ['wallet_topup', 'order_payment', 'withdraw']
+        """Create a payment intent for the given user and purpose."""
+
+        valid_purposes = {
+            IntentPurpose.WALLET_TOPUP,
+            IntentPurpose.ORDER_PAYMENT,
+            IntentPurpose.SYMBOL_PURCHASE,
+            "withdraw",
+        }
         if purpose not in valid_purposes:
-            raise HttpError(400, f"Invalid purpose. Must be one of: {valid_purposes}")
-        
+            raise ValueError(f"Invalid purpose. Must be one of: {sorted(valid_purposes)}")
+
+        try:
+            amount = Decimal(str(amount))
+        except (InvalidOperation, TypeError):
+            raise ValueError("Amount must be a valid decimal number") from None
+
         if amount <= 0:
-            raise HttpError(400, "Amount must be greater than 0")
-        
+            raise ValueError("Amount must be greater than 0")
+
         wallet, _ = self.repository.get_or_create_wallet(user, currency)
-        
         if not wallet.is_active:
             raise HttpError(400, "Wallet is suspended")
-        
+
         order_code = f"PAY_{uuid.uuid4().hex[:8].upper()}_{int(timezone.now().timestamp())}"
-        
-        # Tính expires_at
         expires_at = timezone.now() + timedelta(minutes=expires_in_minutes)
-        
-        # Tạo payment intent
+
         intent = self.repository.create_payment_intent(
             user=user,
             wallet=wallet,
-            provider='sepay',
+            provider="sepay",
             purpose=purpose,
             amount=amount,
             order_code=order_code,
             expires_at=expires_at,
             return_url=return_url,
             cancel_url=cancel_url,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
-        
         return intent
-    
-    def generate_qr_code_url(self, order_code: str, amount: Decimal) -> str:
-        """Sinh QR code URL cho payment"""
+
+    @staticmethod
+    def generate_qr_code_url(order_code: str, amount: Decimal) -> str:
+        """Generate a SePay QR code URL for the given order code and amount."""
         return (
-            f"https://qr.sepay.vn/img?acc=96247CISI1"
-            f"&bank=BIDV"
-            f"&amount={int(amount)}"
-            f"&des={order_code}"
-            f"&template=compact"
+            "https://qr.sepay.vn/img?acc=96247CISI1"
+            f"&bank=BIDV&amount={int(amount)}&des={order_code}&template=compact"
         )
-    
+
     def process_callback(
         self,
         content: str,
         amount: Decimal,
         transfer_type: str,
-        reference_code: str
+        reference_code: str,
     ) -> Dict[str, Any]:
-        """Xử lý callback từ SeaPay"""
-        
+        """Process a callback payload received from SePay."""
+
         if not content:
             raise HttpError(400, "Missing content (order_code)")
-        
+
         if transfer_type != "in":
-            return {"message": "Ignored - not an incoming transfer", "transfer_type": transfer_type}
-        
+            return {
+                "message": "Ignored - not an incoming transfer",
+                "transfer_type": transfer_type,
+            }
+
         intent = self._find_payment_intent_by_order_code(content)
-        
         if not intent:
             raise HttpError(404, f"Payment intent not found for order_code: {content}")
-        
+
+        amount = Decimal(str(amount))
         if amount != intent.amount:
-            # Special handling for wallet topup - allow partial payments
-            if intent.purpose == IntentPurpose.WALLET_TOPUP and amount > 0:
-                print(f"⚠️ Partial topup detected. Expected: {intent.amount}, Received: {amount}")
-                # Process partial amount for wallet topup
-                return self._process_partial_wallet_topup(intent, amount, {
-                    'content': content,
-                    'amount': amount,
-                    'transfer_type': transfer_type,
-                    'reference_code': reference_code
-                })
-            else:
-                raise HttpError(400, f"Amount mismatch. Expected: {intent.amount}, Received: {amount}")
-        
-        if intent.status not in ['requires_payment_method', 'pending_payment']:
-            if intent.status == 'succeeded' and intent.purpose == 'order_payment':
+            raise HttpError(
+                400,
+                f"Amount mismatch. Expected: {intent.amount}, Received: {amount}",
+            )
+
+        if intent.status not in {
+            PaymentStatus.REQUIRES_PAYMENT_METHOD,
+            PaymentStatus.PROCESSING,
+        }:
+            if intent.status == PaymentStatus.SUCCEEDED and intent.purpose == IntentPurpose.ORDER_PAYMENT:
                 self._ensure_order_status_synced(intent)
-            return {"message": "Already processed", "intent_id": str(intent.intent_id), "status": intent.status}
-        
-        if intent.is_expired:
-            self.repository.update_payment_intent_status(intent, 'expired')
+            return {
+                "message": "Already processed",
+                "intent_id": str(intent.intent_id),
+                "status": intent.status,
+            }
+
+        if intent.is_expired():
+            self.repository.update_payment_intent_status(intent, PaymentStatus.EXPIRED)
             raise HttpError(400, "Payment intent has expired")
-        
+
         return self._process_successful_payment(intent, reference_code)
-    
+
     def _find_payment_intent_by_order_code(self, content: str) -> Optional[PayPaymentIntent]:
-        """Tìm payment intent với order code normalization"""
+        content = content.strip()
         intent = self.repository.get_payment_intent_by_order_code(content)
-        
-        if not intent and content.startswith("PAY") and len(content) > 11:
-            formatted_content = f"PAY_{content[3:11]}_{content[11:]}"
-            intent = self.repository.get_payment_intent_by_order_code(formatted_content)
-            
+        if intent:
+            return intent
+
+        if content.startswith("PAY") and len(content) > 11:
+            reformatted = f"PAY_{content[3:11]}_{content[11:]}"
+            intent = self.repository.get_payment_intent_by_order_code(reformatted)
             if intent:
-                print(f"Found intent using formatted order code: {formatted_content} (original: {content})")
-        
+                logger.debug("Resolved formatted order code %s -> %s", content, reformatted)
         return intent
-    
-    def _process_successful_payment(self, intent: PayPaymentIntent, reference_code: str) -> Dict[str, Any]:
-        """Xử lý payment thành công"""
-        self.repository.update_payment_intent_status(intent, 'succeeded', reference_code)
-        
-        if intent.purpose == 'wallet_topup':
-            if intent.wallet:
-                self.repository.update_wallet_balance(intent.wallet, intent.amount)
-                print(f"Updated wallet {intent.wallet.id} balance: +{intent.amount}, new balance: {intent.wallet.balance}")
-        
-        elif intent.purpose == 'order_payment':
+
+    def _process_successful_payment(
+        self,
+        intent: PayPaymentIntent,
+        reference_code: Optional[str],
+    ) -> Dict[str, Any]:
+        self.repository.update_payment_intent_status(intent, PaymentStatus.SUCCEEDED, reference_code)
+
+        if intent.purpose == IntentPurpose.WALLET_TOPUP:
+            wallet = self.repository.get_wallet_by_user(intent.user)
+            if not wallet:
+                wallet, _ = self.repository.get_or_create_wallet(intent.user)
+            self.repository.update_wallet_balance(wallet, intent.amount)
+            logger.info("Wallet %s credited with %s", wallet.id, intent.amount)
+        elif intent.purpose in {IntentPurpose.ORDER_PAYMENT, IntentPurpose.SYMBOL_PURCHASE}:
             self._process_symbol_order_payment(intent)
-            
-        elif intent.purpose == 'withdraw':
-            pass
-        
+
         wallet_balance = None
-        if hasattr(intent, 'wallet') and intent.wallet:
-            wallet_balance = float(intent.wallet.balance)
-        elif intent.user:
-            user_wallet = self.repository.get_wallet_by_user(intent.user)
-            if user_wallet:
-                wallet_balance = float(user_wallet.balance)
-        
+        if intent.user:
+            wallet = self.repository.get_wallet_by_user(intent.user)
+            if wallet:
+                wallet_balance = float(wallet.balance)
+
         return {
-            "message": "OK", 
+            "message": "OK",
             "intent_id": str(intent.intent_id),
             "order_code": intent.order_code,
             "status": intent.status,
-            "wallet_balance": wallet_balance
+            "wallet_balance": wallet_balance,
         }
-    
-    def _process_symbol_order_payment(self, intent: PayPaymentIntent) -> None:
-        """Xử lý thanh toán đơn hàng symbol thành công"""
-        from apps.seapay.models import PaySymbolOrder
-        
+
+    def _ensure_payment_record(
+        self,
+        intent_id: str,
+        amount: Decimal,
+        reference_code: Optional[str],
+    ) -> Optional[PayPayment]:
+        intent = PayPaymentIntent.objects.filter(intent_id=intent_id).first()
+        if not intent:
+            return None
+
+        payment = PayPayment.objects.filter(intent=intent).first()
+        if payment:
+            updated_fields: List[str] = []
+            if payment.status != PaymentStatus.SUCCEEDED:
+                payment.status = PaymentStatus.SUCCEEDED
+                updated_fields.append("status")
+            if reference_code and not payment.provider_payment_id:
+                payment.provider_payment_id = reference_code
+                updated_fields.append("provider_payment_id")
+            if reference_code:
+                metadata = payment.metadata or {}
+                if metadata.get("reference_code") != reference_code:
+                    metadata["reference_code"] = reference_code
+                    payment.metadata = metadata
+                    updated_fields.append("metadata")
+            if updated_fields:
+                updated_fields.append("updated_at")
+                payment.save(update_fields=updated_fields)
+            return payment
+
+        metadata = {"reference_code": reference_code} if reference_code else {}
+        return PayPayment.objects.create(
+            user=intent.user,
+            order=None,
+            intent=intent,
+            amount=amount,
+            status=PaymentStatus.SUCCEEDED,
+            provider_payment_id=reference_code or intent.order_code,
+            message="Processed via SePay webhook",
+            metadata=metadata,
+        )
+
+    def process_sepay_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        content = (payload or {}).get("content") or payload.get("referenceCode") or payload.get("orderCode")
+        if not content:
+            return {"success": False, "message": "Missing content"}
+
         try:
-            order = PaySymbolOrder.objects.filter(
-                payment_intent_id=intent.intent_id
-            ).first()
-            
-            if order:
-                order.status = 'paid'
-                order.save(update_fields=['status', 'updated_at'])
-                
-                self._create_symbol_licenses(order)
-                
-                print(f"Symbol order {order.order_id} marked as paid and licenses created")
-            else:
-                print(f"⚠️ No symbol order found for payment intent {intent.intent_id}")
-                
-        except Exception as e:
-            print(f"❌ Error processing symbol order payment: {e}")
-    
+            amount = Decimal(str(payload.get("transferAmount", 0)))
+        except (InvalidOperation, TypeError, ValueError):
+            return {"success": False, "message": "Invalid amount"}
+
+        transfer_type = payload.get("transferType", "")
+        reference_code = payload.get("referenceCode") or payload.get("content") or ""
+
+        intent_lookup = None
+        if content and not content.startswith("PAY_"):
+            intent_lookup = PayPaymentIntent.objects.filter(reference_code=content).first()
+        if not intent_lookup and reference_code:
+            intent_lookup = PayPaymentIntent.objects.filter(reference_code=reference_code).first()
+        if intent_lookup:
+            content = intent_lookup.order_code
+
+        try:
+            result = self.process_callback(
+                content=content,
+                amount=amount,
+                transfer_type=transfer_type,
+                reference_code=reference_code,
+            )
+        except HttpError as exc:
+            detail = getattr(exc, "detail", str(exc))
+            return {"success": False, "message": str(detail)}
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Unhandled error processing SePay webhook: %s", exc)
+            return {"success": False, "message": str(exc)}
+
+        payment = None
+        intent_id = result.get("intent_id")
+        if intent_id:
+            payment = self._ensure_payment_record(intent_id, amount, reference_code)
+
+        return {
+            "success": True,
+            "message": result.get("message", "OK"),
+            "intent_id": intent_id,
+            "status": result.get("status"),
+            "order_code": result.get("order_code"),
+            "wallet_balance": result.get("wallet_balance"),
+            "payment_id": str(payment.payment_id) if payment else None,
+        }
+
+    def _process_symbol_order_payment(self, intent: PayPaymentIntent) -> None:
+        from apps.seapay.models import PaySymbolOrder
+
+        order = PaySymbolOrder.objects.filter(payment_intent_id=intent.intent_id).first()
+        if not order:
+            logger.warning("No symbol order found for payment intent %s", intent.intent_id)
+            return
+
+        if order.status == OrderStatus.PAID:
+            return
+
+        order.status = OrderStatus.PAID
+        order.save(update_fields=["status", "updated_at"])
+        self._create_symbol_licenses(order)
+        logger.info("Symbol order %s marked as paid", order.order_id)
+
     def _create_symbol_licenses(self, order) -> None:
-        """Tạo licenses cho symbol order"""
         from apps.seapay.models import PayUserSymbolLicense
-        from django.utils import timezone
-        import uuid
-        
+
+        now = timezone.now()
         for item in order.items.all():
-            license_days = item.license_days or 30
-            end_at = timezone.now() + timezone.timedelta(days=license_days)
-            
-            user_license = PayUserSymbolLicense.objects.create(
-                license_id=uuid.uuid4(),
+            end_at = None
+            if item.license_days:
+                end_at = now + timezone.timedelta(days=item.license_days)
+            PayUserSymbolLicense.objects.create(
                 user=order.user,
                 symbol_id=item.symbol_id,
                 order=order,
-                end_at=end_at
+                start_at=now,
+                end_at=end_at,
+                status="active",
             )
-            print(f"✅ Created license {user_license.license_id} for symbol {item.symbol_id} (expires: {end_at})")
-    
+
     def _ensure_order_status_synced(self, intent: PayPaymentIntent) -> None:
-        """Đảm bảo order status sync với intent status"""
         from apps.seapay.models import PaySymbolOrder
-        
-        try:
-            order = PaySymbolOrder.objects.filter(
-                payment_intent_id=intent.intent_id
-            ).first()
-            
-            if order and order.status == 'pending_payment':
-                print(f"🔄 Syncing order {order.order_id} status with succeeded intent")
-                self._process_symbol_order_payment(intent)
-            elif order:
-                print(f"ℹ️ Order {order.order_id} already has status: {order.status}")
-            else:
-                print(f"⚠️ No order found for intent {intent.intent_id}")
-                
-        except Exception as e:
-            print(f"❌ Error syncing order status: {e}")
-    
-    def get_payment_intent(self, intent_id: str, user) -> PayPaymentIntent:
-        """Lấy payment intent theo ID"""
+
+        order = PaySymbolOrder.objects.filter(payment_intent_id=intent.intent_id).first()
+        if not order:
+            logger.warning("No order found for intent %s", intent.intent_id)
+            return
+        if order.status == OrderStatus.PAID:
+            return
+        logger.info("Syncing order %s status with succeeded intent", order.order_id)
+        self._process_symbol_order_payment(intent)
+
+    def get_payment_intent(self, intent_id: str, user: User) -> PayPaymentIntent:
         intent = self.repository.get_payment_intent_by_id(intent_id, user)
         if not intent:
             raise HttpError(404, "Payment intent not found")
         return intent
-    
+
     def get_or_create_wallet(self, user: User) -> PayWallet:
-        """Lấy hoặc tạo wallet cho user"""
         wallet = self.repository.get_wallet_by_user(user)
         if not wallet:
             wallet, _ = self.repository.get_or_create_wallet(user)
         return wallet
-    
-    def create_legacy_order(self, order_id: str, amount: Decimal, description: str = "") -> Dict[str, Any]:
-        """Tạo legacy order (cho compatibility)"""
+
+    def create_legacy_order(
+        self,
+        order_id: str,
+        amount: Decimal,
+        description: str = "",
+    ) -> Dict[str, Any]:
         order, created = self.repository.get_or_create_legacy_order(order_id, amount, description)
-        
         if not created:
             raise HttpError(400, f"Order {order_id} already exists")
-        
-        transfer_content = f"SEAPAY_{order_id}"
-        
+
+        transfer_content = f"SEPAY_{order_id}"
         qr_code_url = self.generate_qr_code_url(transfer_content, amount)
-        
         return {
             "order_id": str(order.id),
             "qr_code_url": qr_code_url,
             "transfer_content": transfer_content,
-            "status": order.status
+            "status": order.status,
         }
-        
+
     def get_user_wallet(self, user: User) -> PayWallet:
-        """Lấy wallet của user"""
         wallet, _ = self.repository.get_or_create_wallet(user)
         return wallet
-        
+
     def list_user_payment_intents(self, user: User) -> List[PayPaymentIntent]:
-        """Lấy tất cả payment intents của user"""
-        return self.repository.get_payment_intents_by_user(user)    
-        
+        return self.repository.get_payment_intents_by_user(user)[1]
+
     def get_paginated_payment_intents(
         self,
         user: User,
@@ -273,106 +367,20 @@ class PaymentService:
         search: Optional[str] = None,
         status: Optional[str] = None,
         purpose: Optional[str] = None,
-    ):
-        """Lấy payment intents với phân trang"""
+    ) -> Dict[str, Any]:
         page = page or 1
         limit = limit or 10
         total, items = self.repository.get_payment_intents_by_user(
-            user, page, limit, search, status, purpose
+            user,
+            page,
+            limit,
+            search,
+            status,
+            purpose,
         )
         return {
             "total": total,
             "results": items,
             "page": page,
-            "page_size": limit,  
+            "page_size": limit,
         }
-    
-    def _process_partial_wallet_topup(self, intent: PayPaymentIntent, amount: Decimal, transaction_data: Dict) -> Dict[str, Any]:
-        """Xử lý partial wallet topup - tạo topup độc lập với số tiền thực tế"""
-        try:
-            # Import services cần thiết
-            from apps.seapay.models import PayWallet, PayWalletLedger, PayBankTransaction, PayPayment, WalletTxType, PaymentStatus
-            from django.db import transaction
-            import random
-            
-            # Lấy user từ intent
-            user = intent.user
-            
-            # Lấy hoặc tạo wallet
-            wallet, _ = PayWallet.objects.get_or_create(
-                user=user,
-                defaults={'currency': 'VND', 'balance': Decimal('0.00'), 'status': 'active'}
-            )
-            
-            with transaction.atomic():
-                # Tạo fake sepay transaction ID
-                fake_sepay_id = random.randint(90000000, 99999999)
-                
-                # Tạo bank transaction record
-                bank_tx = PayBankTransaction.objects.create(
-                    sepay_tx_id=fake_sepay_id,
-                    transaction_date=timezone.now(),
-                    account_number='1160976779',
-                    amount_in=amount,
-                    amount_out=Decimal('0.00'),
-                    content=f"PARTIAL_TOPUP_{fake_sepay_id}",
-                    reference_number=transaction_data.get('reference_code', ''),
-                    bank_code='BIDV'
-                )
-                
-                # Tạo payment record
-                payment = PayPayment.objects.create(
-                    user=user,
-                    order=None,  # Không liên kết với order cụ thể
-                    intent=None,  # Không liên kết với intent cũ
-                    amount=amount,
-                    status=PaymentStatus.SUCCEEDED,
-                    provider_payment_id=str(fake_sepay_id),
-                    message=f"Partial wallet topup: {amount} VND",
-                    metadata={
-                        'original_intent_id': str(intent.intent_id),
-                        'original_expected_amount': float(intent.amount),
-                        'partial_topup': True,
-                        'bank_transaction_id': fake_sepay_id
-                    }
-                )
-                
-                # Tạo ledger entry
-                balance_before = wallet.balance
-                balance_after = balance_before + amount
-                
-                ledger_entry = PayWalletLedger.objects.create(
-                    wallet=wallet,
-                    tx_type=WalletTxType.DEPOSIT,
-                    amount=amount,
-                    is_credit=True,
-                    balance_before=balance_before,
-                    balance_after=balance_after,
-                    payment=payment,
-                    note=f"Partial topup from bank transfer - {amount} VND"
-                )
-                
-                # Cập nhật wallet balance
-                wallet.balance = balance_after
-                wallet.save(update_fields=['balance', 'updated_at'])
-            
-            return {
-                "message": f"Partial topup processed: {amount} VND added to wallet", 
-                "intent_id": str(intent.intent_id),
-                "amount_processed": float(amount),
-                "amount_expected": float(intent.amount),
-                "remaining_amount": float(intent.amount - amount),
-                "new_wallet_balance": float(wallet.balance),
-                "payment_id": str(payment.payment_id),
-                "status": "partial_success"
-            }
-            
-        except Exception as e:
-            print(f"Error processing partial topup: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                "message": f"Partial topup failed: {str(e)}", 
-                "intent_id": str(intent.intent_id),
-                "status": "partial_failed"
-            }

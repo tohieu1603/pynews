@@ -1,26 +1,33 @@
+import datetime as dt
+from typing import Any, Dict, Tuple
 
-from ninja.security import HttpBearer
 import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from ninja.security import HttpBearer
 
 User = get_user_model()
 
+
 class JWTAuth(HttpBearer):
-    def authenticate(self, request, token):
+    """Authenticate requests using a bearer JWT token."""
+
+    def authenticate(self, request, token: str):  # type: ignore[override]
         try:
             payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-            user_id = payload.get("user_id") or payload.get("sub")
-            if not user_id:
-                return None
-            user = User.objects.get(id=user_id)
-            return user
         except Exception:
+            return None
+        user_id = payload.get("user_id") or payload.get("sub")
+        if not user_id:
+            return None
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
             return None
 
 
 def cookie_or_bearer_jwt_auth(request):
-    """Authenticate via Authorization Bearer header or HttpOnly access_token cookie."""
+    """Authenticate via Authorization header or access_token cookie."""
     auth_header = request.headers.get("Authorization") or request.META.get("HTTP_AUTHORIZATION")
     token = None
     if auth_header and auth_header.startswith("Bearer "):
@@ -33,22 +40,19 @@ def cookie_or_bearer_jwt_auth(request):
 
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        user_id = payload.get("user_id") or payload.get("sub")
-        if not user_id:
-            return None
-        user = User.objects.get(id=user_id)
-        return user
     except Exception:
         return None
-import datetime as dt
-from typing import Any, Dict, Tuple
-
-import jwt
-from django.conf import settings
+    user_id = payload.get("user_id") or payload.get("sub")
+    if not user_id:
+        return None
+    try:
+        return User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return None
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.utcnow()
+    return dt.datetime.now(dt.timezone.utc)
 
 
 def create_tokens(user_id: int, email: str | None = None) -> Tuple[str, str, int, int]:
@@ -75,10 +79,17 @@ def create_tokens(user_id: int, email: str | None = None) -> Tuple[str, str, int
 
     access = jwt.encode(access_claims, secret, algorithm=alg)
     refresh = jwt.encode(refresh_claims, secret, algorithm=alg)
-    return access, refresh, int(access_ttl * 60), int(refresh_ttl_days * 24 * 3600)
+    return access, refresh, access_ttl * 60, refresh_ttl_days * 24 * 3600
 
 
 def decode_token(token: str) -> Dict[str, Any]:
     secret = getattr(settings, "JWT_SECRET", settings.SECRET_KEY)
     alg = getattr(settings, "JWT_ALGORITHM", "HS256")
     return jwt.decode(token, secret, algorithms=[alg])
+
+
+def create_jwt_token(user, *, include_refresh: bool = False):
+    """Return a signed JWT access token for the given user."""
+    email = getattr(user, "email", None)
+    access, refresh, _, _ = create_tokens(user_id=user.id, email=email)
+    return (access, refresh) if include_refresh else access

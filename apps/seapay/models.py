@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -9,6 +9,8 @@ User = get_user_model()
 class IntentPurpose(models.TextChoices):
     WALLET_TOPUP = 'wallet_topup', 'Wallet Top-up'
     ORDER_PAYMENT = 'order_payment', 'Order Payment'
+    SYMBOL_PURCHASE = 'symbol_purchase', 'Symbol Purchase'
+    WITHDRAW = 'withdraw', 'Withdraw'
 
 
 class PaymentStatus(models.TextChoices):
@@ -40,28 +42,28 @@ class LicenseStatus(models.TextChoices):
 
 
 class WalletTxType(models.TextChoices):
-    DEPOSIT = 'deposit', 'Nạp tiền (từ SePay)'
+    DEPOSIT = 'deposit', 'NÃ¡ÂºÂ¡p tiÃ¡Â»Ân (tÃ¡Â»Â« SePay)'
     PURCHASE = 'purchase', 'Mua bot'
-    REFUND = 'refund', 'Hoàn tiền'
-    WITHDRAWAL = 'withdrawal', 'Rút tiền'
-    TRANSFER_IN = 'transfer_in', 'Chuyển đến'
-    TRANSFER_OUT = 'transfer_out', 'Chuyển đi'
+    REFUND = 'refund', 'HoÃƒÂ n tiÃ¡Â»Ân'
+    WITHDRAWAL = 'withdrawal', 'RÃƒÂºt tiÃ¡Â»Ân'
+    TRANSFER_IN = 'transfer_in', 'ChuyÃ¡Â»Æ’n Ã„â€˜Ã¡ÂºÂ¿n'
+    TRANSFER_OUT = 'transfer_out', 'ChuyÃ¡Â»Æ’n Ã„â€˜i'
 
 
 class PayOrder(models.Model):
     """
-    Đơn hàng có thể được thanh toán qua payment intents.
+    Ã„ÂÃ†Â¡n hÃƒÂ ng cÃƒÂ³ thÃ¡Â»Æ’ Ã„â€˜Ã†Â°Ã¡Â»Â£c thanh toÃƒÂ¡n qua payment intents.
     """
     order_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        db_comment="Người tạo đơn hàng"
+        db_comment="NgÃ†Â°Ã¡Â»Âi tÃ¡ÂºÂ¡o Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     total_amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Tổng giá trị đơn hàng"
+        db_comment="TÃ¡Â»â€¢ng giÃƒÂ¡ trÃ¡Â»â€¹ Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     status = models.CharField(
         max_length=20,
@@ -72,23 +74,23 @@ class PayOrder(models.Model):
             ('expired', 'Expired'),
         ],
         default='pending',
-        db_comment="Trạng thái đơn hàng"
+        db_comment="TrÃ¡ÂºÂ¡ng thÃƒÂ¡i Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     description = models.TextField(
         blank=True,
-        db_comment="Mô tả đơn hàng"
+        db_comment="MÃƒÂ´ tÃ¡ÂºÂ£ Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Dữ liệu bổ sung của đơn hàng"
+        db_comment="DÃ¡Â»Â¯ liÃ¡Â»â€¡u bÃ¡Â»â€¢ sung cÃ¡Â»Â§a Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "pay_orders"
-        db_table_comment = "Đơn hàng có thể được thanh toán qua payment intents."
+        db_table_comment = "Ã„ÂÃ†Â¡n hÃƒÂ ng cÃƒÂ³ thÃ¡Â»Æ’ Ã„â€˜Ã†Â°Ã¡Â»Â£c thanh toÃƒÂ¡n qua payment intents."
         indexes = [
             models.Index(fields=['user'], name='idx_pay_orders_user'),
             models.Index(fields=['status'], name='idx_pay_orders_status'),
@@ -101,8 +103,8 @@ class PayOrder(models.Model):
 
 class PayWallet(models.Model):
     """
-    Ví điện tử của user. Mỗi user có 1 ví / 1 loại tiền.
-    Tất cả thay đổi số dư đi qua pay_wallet_ledger.
+    VÃƒÂ­ Ã„â€˜iÃ¡Â»â€¡n tÃ¡Â»Â­ cÃ¡Â»Â§a user. MÃ¡Â»â€”i user cÃƒÂ³ 1 vÃƒÂ­ / 1 loÃ¡ÂºÂ¡i tiÃ¡Â»Ân.
+    TÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ thay Ã„â€˜Ã¡Â»â€¢i sÃ¡Â»â€˜ dÃ†Â° Ã„â€˜i qua pay_wallet_ledger.
     """
     STATUS_CHOICES = [
         ('active', 'Active'),
@@ -118,32 +120,32 @@ class PayWallet(models.Model):
     user = models.ForeignKey(
         User, 
         on_delete=models.CASCADE,
-        db_comment="Chủ ví"
+        db_comment="ChÃ¡Â»Â§ vÃƒÂ­"
     )
     balance = models.DecimalField(
         max_digits=18, 
         decimal_places=2, 
         default=Decimal('0.00'),
-        db_comment="Số dư hiện tại, chỉ cập nhật qua ledger"
+        db_comment="SÃ¡Â»â€˜ dÃ†Â° hiÃ¡Â»â€¡n tÃ¡ÂºÂ¡i, chÃ¡Â»â€° cÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t qua ledger"
     )
     currency = models.CharField(
         max_length=10, 
         choices=CURRENCY_CHOICES,
         default='VND',
-        db_comment="Loại tiền (VNĐ, USD...)"
+        db_comment="LoÃ¡ÂºÂ¡i tiÃ¡Â»Ân (VNÃ„Â, USD...)"
     )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
         default='active',
-        db_comment="active | suspended (khóa tạm thời)"
+        db_comment="active | suspended (khÃƒÂ³a tÃ¡ÂºÂ¡m thÃ¡Â»Âi)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "pay_wallets"
-        db_table_comment = "Mỗi user có 1 ví / 1 loại tiền. Tất cả thay đổi số dư đi qua pay_wallet_ledger."
+        db_table_comment = "MÃ¡Â»â€”i user cÃƒÂ³ 1 vÃƒÂ­ / 1 loÃ¡ÂºÂ¡i tiÃ¡Â»Ân. TÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ thay Ã„â€˜Ã¡Â»â€¢i sÃ¡Â»â€˜ dÃ†Â° Ã„â€˜i qua pay_wallet_ledger."
         indexes = [
             models.Index(fields=['user'], name='idx_pay_wallets_user'),
         ]
@@ -161,44 +163,44 @@ class PayWallet(models.Model):
 
 class PayWalletLedger(models.Model):
     """
-    Nguồn sự thật cho tất cả giao dịch ví. Mọi thay đổi số dù phải đi qua ledger này.
+    NguÃ¡Â»â€œn sÃ¡Â»Â± thÃ¡ÂºÂ­t cho tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ giao dÃ¡Â»â€¹ch vÃƒÂ­. MÃ¡Â»Âi thay Ã„â€˜Ã¡Â»â€¢i sÃ¡Â»â€˜ dÃƒÂ¹ phÃ¡ÂºÂ£i Ã„â€˜i qua ledger nÃƒÂ y.
     """
     ledger_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     wallet = models.ForeignKey(
         PayWallet,
         on_delete=models.CASCADE,
         related_name='ledger_entries',
-        db_comment="Ví bị ảnh hưởng"
+        db_comment="VÃƒÂ­ bÃ¡Â»â€¹ Ã¡ÂºÂ£nh hÃ†Â°Ã¡Â»Å¸ng"
     )
     tx_type = models.CharField(
         max_length=20,
         choices=WalletTxType.choices,
-        db_comment="Loại biến động: nạp/purchase/hoàn tiền/..."
+        db_comment="LoÃ¡ÂºÂ¡i biÃ¡ÂºÂ¿n Ã„â€˜Ã¡Â»â„¢ng: nÃ¡ÂºÂ¡p/purchase/hoÃƒÂ n tiÃ¡Â»Ân/..."
     )
     amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Luôn > 0; chiều thể hiện bằng is_credit"
+        db_comment="LuÃƒÂ´n > 0; chiÃ¡Â»Âu thÃ¡Â»Æ’ hiÃ¡Â»â€¡n bÃ¡ÂºÂ±ng is_credit"
     )
     is_credit = models.BooleanField(
-        db_comment="true: cộng ví; false: trừ ví"
+        db_comment="true: cÃ¡Â»â„¢ng vÃƒÂ­; false: trÃ¡Â»Â« vÃƒÂ­"
     )
     balance_before = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số dư trước giao dịch"
+        db_comment="SÃ¡Â»â€˜ dÃ†Â° trÃ†Â°Ã¡Â»â€ºc giao dÃ¡Â»â€¹ch"
     )
     balance_after = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số dư ngay sau giao dịch này"
+        db_comment="SÃ¡Â»â€˜ dÃ†Â° ngay sau giao dÃ¡Â»â€¹ch nÃƒÂ y"
     )
     order = models.ForeignKey(
         'PaySymbolOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Liên kết đơn hàng khi là purchase/refund"
+        db_comment="LiÃƒÂªn kÃ¡ÂºÂ¿t Ã„â€˜Ã†Â¡n hÃƒÂ ng khi lÃƒÂ  purchase/refund"
     )
     payment = models.ForeignKey(
         'PayPayment',
@@ -206,22 +208,22 @@ class PayWalletLedger(models.Model):
         null=True,
         blank=True,
         related_name='ledger_entries',
-        db_comment="Bắt buộc với deposit (nạp qua SePay)"
+        db_comment="BÃ¡ÂºÂ¯t buÃ¡Â»â„¢c vÃ¡Â»â€ºi deposit (nÃ¡ÂºÂ¡p qua SePay)"
     )
     note = models.TextField(
         blank=True,
-        db_comment="Diễn giải ngắn gọn cho bản ghi sổ cái"
+        db_comment="DiÃ¡Â»â€¦n giÃ¡ÂºÂ£i ngÃ¡ÂºÂ¯n gÃ¡Â»Ân cho bÃ¡ÂºÂ£n ghi sÃ¡Â»â€¢ cÃƒÂ¡i"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Payload bổ sung: ip, device, source, ..."
+        db_comment="Payload bÃ¡Â»â€¢ sung: ip, device, source, ..."
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pay_wallet_ledger"
-        db_table_comment = "Quy tắc: deposit phải có payment_id (SePay); purchase phải có order_id. Sổ cái là nguồn sự thật để tính balance."
+        db_table_comment = "Quy tÃ¡ÂºÂ¯c: deposit phÃ¡ÂºÂ£i cÃƒÂ³ payment_id (SePay); purchase phÃ¡ÂºÂ£i cÃƒÂ³ order_id. SÃ¡Â»â€¢ cÃƒÂ¡i lÃƒÂ  nguÃ¡Â»â€œn sÃ¡Â»Â± thÃ¡ÂºÂ­t Ã„â€˜Ã¡Â»Æ’ tÃƒÂ­nh balance."
         indexes = [
             models.Index(fields=['wallet', 'created_at'], name='idx_ledger_wallet_created'),
             models.Index(fields=['payment'], name='idx_ledger_payment'),
@@ -249,56 +251,62 @@ class PayWalletLedger(models.Model):
 
 class PayPaymentIntent(models.Model):
     """
-    Một yêu cầu thu tiền. Provider cố định là SePay (chính sách hệ thống).
+    MÃ¡Â»â„¢t yÃƒÂªu cÃ¡ÂºÂ§u thu tiÃ¡Â»Ân. Provider cÃ¡Â»â€˜ Ã„â€˜Ã¡Â»â€¹nh lÃƒÂ  SePay (chÃƒÂ­nh sÃƒÂ¡ch hÃ¡Â»â€¡ thÃ¡Â»â€˜ng).
     """
     intent_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        db_comment="Ai đang thanh toán"
+        db_comment="Ai Ã„â€˜ang thanh toÃƒÂ¡n"
     )
     order = models.ForeignKey(
         'PaySymbolOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Liên kết nếu là thanh toán đơn"
+        db_comment="LiÃƒÂªn kÃ¡ÂºÂ¿t nÃ¡ÂºÂ¿u lÃƒÂ  thanh toÃƒÂ¡n Ã„â€˜Ã†Â¡n"
     )
     purpose = models.CharField(
         max_length=20,
         choices=IntentPurpose.choices,
-        db_comment="wallet_topup (nạp ví) | order_payment (mua trực tiếp)"
+        db_comment="wallet_topup (nÃ¡ÂºÂ¡p vÃƒÂ­) | order_payment (mua trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p)"
     )
     amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số tiền phải trả"
+        db_comment="SÃ¡Â»â€˜ tiÃ¡Â»Ân phÃ¡ÂºÂ£i trÃ¡ÂºÂ£"
     )
     status = models.CharField(
         max_length=30,
         choices=PaymentStatus.choices,
         default=PaymentStatus.REQUIRES_PAYMENT_METHOD,
-        db_comment="Trạng thái luồng thanh toán"
+        db_comment="TrÃ¡ÂºÂ¡ng thÃƒÂ¡i luÃ¡Â»â€œng thanh toÃƒÂ¡n"
     )
     order_code = models.CharField(
         max_length=255,
         unique=True,
-        db_comment="Chuỗi đối soát CK (nội dung chuyển khoản). Cần duy nhất để match."
+        db_comment="ChuÃ¡Â»â€”i Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t CK (nÃ¡Â»â„¢i dung chuyÃ¡Â»Æ’n khoÃ¡ÂºÂ£n). CÃ¡ÂºÂ§n duy nhÃ¡ÂºÂ¥t Ã„â€˜Ã¡Â»Æ’ match."
+    )
+    reference_code = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_comment='Reference code returned by provider for reconciliation'
     )
     return_url = models.TextField(
         null=True,
         blank=True,
-        db_comment="URL trở về khi thanh toán xong (nếu dùng webflow)"
+        db_comment="URL trÃ¡Â»Å¸ vÃ¡Â»Â khi thanh toÃƒÂ¡n xong (nÃ¡ÂºÂ¿u dÃƒÂ¹ng webflow)"
     )
     cancel_url = models.TextField(
         null=True,
         blank=True,
-        db_comment="URL trở về khi hủy"
+        db_comment="URL trÃ¡Â»Å¸ vÃ¡Â»Â khi hÃ¡Â»Â§y"
     )
     expires_at = models.DateTimeField(
         null=True,
         blank=True,
-        db_comment="Hạn sử dụng intent/QR"
+        db_comment="HÃ¡ÂºÂ¡n sÃ¡Â»Â­ dÃ¡Â»Â¥ng intent/QR"
     )
     qr_code_url = models.TextField(
         null=True,
@@ -313,14 +321,14 @@ class PayPaymentIntent(models.Model):
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Payload bổ sung (IP, UA, campaign...)"
+        db_comment="Payload bÃ¡Â»â€¢ sung (IP, UA, campaign...)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "pay_payment_intents"
-        db_table_comment = "Một yêu cầu thu tiền. Provider cố định là SePay (chính sách hệ thống)."
+        db_table_comment = "MÃ¡Â»â„¢t yÃƒÂªu cÃ¡ÂºÂ§u thu tiÃ¡Â»Ân. Provider cÃ¡Â»â€˜ Ã„â€˜Ã¡Â»â€¹nh lÃƒÂ  SePay (chÃƒÂ­nh sÃƒÂ¡ch hÃ¡Â»â€¡ thÃ¡Â»â€˜ng)."
         indexes = [
             models.Index(fields=['user', 'status'], name='idx_pay_intents_user_status'),
             models.Index(fields=['order'], name='idx_pay_intents_order'),
@@ -329,13 +337,11 @@ class PayPaymentIntent(models.Model):
     def __str__(self):
         return f"Intent {self.intent_id} - {self.status} - {self.amount}"
 
-    @property
     def is_expired(self):
         if not self.expires_at:
             return False
         return timezone.now() > self.expires_at
 
-    @property
     def is_pending(self):
         return self.status in [PaymentStatus.REQUIRES_PAYMENT_METHOD, PaymentStatus.PROCESSING]
 
@@ -345,7 +351,7 @@ class PayPaymentIntent(models.Model):
 
     def expire(self):
         """Mark intent as expired"""
-        if self.is_pending:
+        if self.is_pending():
             self.status = PaymentStatus.EXPIRED
             self.save(update_fields=['status', 'updated_at'])
 
@@ -362,19 +368,19 @@ class PayPaymentIntent(models.Model):
 
 class PayPaymentAttempt(models.Model):
     """
-    Một intent có thể có nhiều attempt (tạo lại QR, đổi số tiền...). Provider cố định: SePay.
+    MÃ¡Â»â„¢t intent cÃƒÂ³ thÃ¡Â»Æ’ cÃƒÂ³ nhiÃ¡Â»Âu attempt (tÃ¡ÂºÂ¡o lÃ¡ÂºÂ¡i QR, Ã„â€˜Ã¡Â»â€¢i sÃ¡Â»â€˜ tiÃ¡Â»Ân...). Provider cÃ¡Â»â€˜ Ã„â€˜Ã¡Â»â€¹nh: SePay.
     """
     attempt_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     intent = models.ForeignKey(
         PayPaymentIntent,
         on_delete=models.CASCADE,
-        db_comment="Thuộc intent nào"
+        db_comment="ThuÃ¡Â»â„¢c intent nÃƒÂ o"
     )
     status = models.CharField(
         max_length=30,
         choices=PaymentStatus.choices,
         default=PaymentStatus.REQUIRES_PAYMENT_METHOD,
-        db_comment="Tiến trình attempt"
+        db_comment="TiÃ¡ÂºÂ¿n trÃƒÂ¬nh attempt"
     )
     bank_code = models.CharField(
         max_length=10,
@@ -386,57 +392,57 @@ class PayPaymentAttempt(models.Model):
         max_length=50,
         null=True,
         blank=True,
-        db_comment="STK nhận hoặc VA theo đơn"
+        db_comment="STK nhÃ¡ÂºÂ­n hoÃ¡ÂºÂ·c VA theo Ã„â€˜Ã†Â¡n"
     )
     account_name = models.CharField(
         max_length=255,
         null=True,
         blank=True,
-        db_comment="Tên tài khoản nhận"
+        db_comment="TÃƒÂªn tÃƒÂ i khoÃ¡ÂºÂ£n nhÃ¡ÂºÂ­n"
     )
     transfer_content = models.TextField(
         null=True,
         blank=True,
-        db_comment="Nội dung CK chính xác để auto-match"
+        db_comment="NÃ¡Â»â„¢i dung CK chÃƒÂ­nh xÃƒÂ¡c Ã„â€˜Ã¡Â»Æ’ auto-match"
     )
     transfer_amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
         null=True,
         blank=True,
-        db_comment="Số tiền hiển thị trên QR (có thể khóa cứng)"
+        db_comment="SÃ¡Â»â€˜ tiÃ¡Â»Ân hiÃ¡Â»Æ’n thÃ¡Â»â€¹ trÃƒÂªn QR (cÃƒÂ³ thÃ¡Â»Æ’ khÃƒÂ³a cÃ¡Â»Â©ng)"
     )
     qr_image_url = models.TextField(
         null=True,
         blank=True,
-        db_comment="Link ảnh QR động VietQR (SePay)"
+        db_comment="Link Ã¡ÂºÂ£nh QR Ã„â€˜Ã¡Â»â„¢ng VietQR (SePay)"
     )
     qr_svg = models.TextField(
         null=True,
         blank=True,
-        db_comment="Dữ liệu SVG QR nếu render trực tiếp"
+        db_comment="DÃ¡Â»Â¯ liÃ¡Â»â€¡u SVG QR nÃ¡ÂºÂ¿u render trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p"
     )
     provider_session_id = models.CharField(
         max_length=255,
         null=True,
         blank=True,
-        db_comment="Mã phiên/khoá phía SePay nếu có"
+        db_comment="MÃƒÂ£ phiÃƒÂªn/khoÃƒÂ¡ phÃƒÂ­a SePay nÃ¡ÂºÂ¿u cÃƒÂ³"
     )
     expires_at = models.DateTimeField(
         null=True,
         blank=True,
-        db_comment="Hết hạn phiên attempt/QR"
+        db_comment="HÃ¡ÂºÂ¿t hÃ¡ÂºÂ¡n phiÃƒÂªn attempt/QR"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Payload bổ sung"
+        db_comment="Payload bÃ¡Â»â€¢ sung"
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pay_payment_attempts"
-        db_table_comment = "Một intent có thể có nhiều attempt (tạo lại QR, đổi số tiền...). Provider cố định: SePay."
+        db_table_comment = "MÃ¡Â»â„¢t intent cÃƒÂ³ thÃ¡Â»Æ’ cÃƒÂ³ nhiÃ¡Â»Âu attempt (tÃ¡ÂºÂ¡o lÃ¡ÂºÂ¡i QR, Ã„â€˜Ã¡Â»â€¢i sÃ¡Â»â€˜ tiÃ¡Â»Ân...). Provider cÃ¡Â»â€˜ Ã„â€˜Ã¡Â»â€¹nh: SePay."
         indexes = [
             models.Index(fields=['intent'], name='idx_pay_attempts_intent'),
         ]
@@ -447,62 +453,62 @@ class PayPaymentAttempt(models.Model):
 
 class PayPayment(models.Model):
     """
-    Bút toán thanh toán ở cấp "gateway". Khi succeeded: nếu là nạp ví → ghi credit ledger; 
-    nếu là order → chuyển order sang paid, cấp license.
+    BÃƒÂºt toÃƒÂ¡n thanh toÃƒÂ¡n Ã¡Â»Å¸ cÃ¡ÂºÂ¥p "gateway". Khi succeeded: nÃ¡ÂºÂ¿u lÃƒÂ  nÃ¡ÂºÂ¡p vÃƒÂ­ Ã¢â€ â€™ ghi credit ledger; 
+    nÃ¡ÂºÂ¿u lÃƒÂ  order Ã¢â€ â€™ chuyÃ¡Â»Æ’n order sang paid, cÃ¡ÂºÂ¥p license.
     """
     payment_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        db_comment="Người thực hiện thanh toán"
+        db_comment="NgÃ†Â°Ã¡Â»Âi thÃ¡Â»Â±c hiÃ¡Â»â€¡n thanh toÃƒÂ¡n"
     )
     order = models.ForeignKey(
         'PaySymbolOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Đơn hàng liên quan (nếu có)"
+        db_comment="Ã„ÂÃ†Â¡n hÃƒÂ ng liÃƒÂªn quan (nÃ¡ÂºÂ¿u cÃƒÂ³)"
     )
     intent = models.ForeignKey(
         PayPaymentIntent,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Intent dẫn đến payment này"
+        db_comment="Intent dÃ¡ÂºÂ«n Ã„â€˜Ã¡ÂºÂ¿n payment nÃƒÂ y"
     )
     amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Số tiền thanh toán"
+        db_comment="SÃ¡Â»â€˜ tiÃ¡Â»Ân thanh toÃƒÂ¡n"
     )
     status = models.CharField(
         max_length=30,
         choices=PaymentStatus.choices,
         default=PaymentStatus.PROCESSING,
-        db_comment="Trạng thái chốt sau khi đối soát"
+        db_comment="TrÃ¡ÂºÂ¡ng thÃƒÂ¡i chÃ¡Â»â€˜t sau khi Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t"
     )
     provider_payment_id = models.CharField(
         max_length=255,
         null=True,
         blank=True,
-        db_comment="ID giao dịch SePay (sepay_tx_id) để tra soát"
+        db_comment="ID giao dÃ¡Â»â€¹ch SePay (sepay_tx_id) Ã„â€˜Ã¡Â»Æ’ tra soÃƒÂ¡t"
     )
     message = models.TextField(
         null=True,
         blank=True,
-        db_comment="Ghi chú trạng thái (VD: Lý do failed)"
+        db_comment="Ghi chÃƒÂº trÃ¡ÂºÂ¡ng thÃƒÂ¡i (VD: LÃƒÂ½ do failed)"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Payload bổ sung (bản đồ đối soát, sai số...)"
+        db_comment="Payload bÃ¡Â»â€¢ sung (bÃ¡ÂºÂ£n Ã„â€˜Ã¡Â»â€œ Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t, sai sÃ¡Â»â€˜...)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "pay_payments"
-        db_table_comment = "Bút toán thanh toán ở cấp gateway. Khi succeeded: nếu là nạp ví → ghi credit ledger; nếu là order → chuyển order sang paid, cấp license."
+        db_table_comment = "BÃƒÂºt toÃƒÂ¡n thanh toÃƒÂ¡n Ã¡Â»Å¸ cÃ¡ÂºÂ¥p gateway. Khi succeeded: nÃ¡ÂºÂ¿u lÃƒÂ  nÃ¡ÂºÂ¡p vÃƒÂ­ Ã¢â€ â€™ ghi credit ledger; nÃ¡ÂºÂ¿u lÃƒÂ  order Ã¢â€ â€™ chuyÃ¡Â»Æ’n order sang paid, cÃ¡ÂºÂ¥p license."
         indexes = [
             models.Index(fields=['user', 'created_at'], name='idx_pay_payments_user_created'),
             models.Index(fields=['intent'], name='idx_pay_payments_intent'),
@@ -515,30 +521,30 @@ class PayPayment(models.Model):
 
 class PaySepayWebhookEvent(models.Model):
     """
-    Inbox webhook của SePay. Ta luôn lưu thô trước, sau đó mới parse và xử lý để đảm bảo an toàn.
+    Inbox webhook cÃ¡Â»Â§a SePay. Ta luÃƒÂ´n lÃ†Â°u thÃƒÂ´ trÃ†Â°Ã¡Â»â€ºc, sau Ã„â€˜ÃƒÂ³ mÃ¡Â»â€ºi parse vÃƒÂ  xÃ¡Â»Â­ lÃƒÂ½ Ã„â€˜Ã¡Â»Æ’ Ã„â€˜Ã¡ÂºÂ£m bÃ¡ÂºÂ£o an toÃƒÂ n.
     """
     webhook_event_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     sepay_tx_id = models.BigIntegerField(
         unique=True,
-        db_comment="ID duy nhất từ SePay để idempotent (tránh xử lý trùng)"
+        db_comment="ID duy nhÃ¡ÂºÂ¥t tÃ¡Â»Â« SePay Ã„â€˜Ã¡Â»Æ’ idempotent (trÃƒÂ¡nh xÃ¡Â»Â­ lÃƒÂ½ trÃƒÂ¹ng)"
     )
     received_at = models.DateTimeField(auto_now_add=True)
     payload = models.JSONField(
-        db_comment="Lưu nguyên phần thân webhook để debug/đối soát"
+        db_comment="LÃ†Â°u nguyÃƒÂªn phÃ¡ÂºÂ§n thÃƒÂ¢n webhook Ã„â€˜Ã¡Â»Æ’ debug/Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t"
     )
     processed = models.BooleanField(
         default=False,
-        db_comment="Đã xử lý phát sinh payment/ledger chưa"
+        db_comment="Ã„ÂÃƒÂ£ xÃ¡Â»Â­ lÃƒÂ½ phÃƒÂ¡t sinh payment/ledger chÃ†Â°a"
     )
     process_error = models.TextField(
         null=True,
         blank=True,
-        db_comment="Thông tin lỗi nếu xử lý thất bại"
+        db_comment="ThÃƒÂ´ng tin lÃ¡Â»â€”i nÃ¡ÂºÂ¿u xÃ¡Â»Â­ lÃƒÂ½ thÃ¡ÂºÂ¥t bÃ¡ÂºÂ¡i"
     )
 
     class Meta:
         db_table = "pay_sepay_webhook_events"
-        db_table_comment = "Inbox webhook của SePay. Ta luôn lưu thô trước, sau đó mới parse và xử lý để đảm bảo an toàn."
+        db_table_comment = "Inbox webhook cÃ¡Â»Â§a SePay. Ta luÃƒÂ´n lÃ†Â°u thÃƒÂ´ trÃ†Â°Ã¡Â»â€ºc, sau Ã„â€˜ÃƒÂ³ mÃ¡Â»â€ºi parse vÃƒÂ  xÃ¡Â»Â­ lÃƒÂ½ Ã„â€˜Ã¡Â»Æ’ Ã„â€˜Ã¡ÂºÂ£m bÃ¡ÂºÂ£o an toÃƒÂ n."
         indexes = [
             models.Index(fields=['sepay_tx_id'], name='idx_sepay_webhooks_tx_id'),
             models.Index(fields=['processed'], name='idx_sepay_webhooks_processed'),
@@ -551,41 +557,41 @@ class PaySepayWebhookEvent(models.Model):
 
 class PayBankTransaction(models.Model):
     """
-    Bảng đối soát chủ động từ API SePay: id, số tiền, nội dung, tham chiếu…
+    BÃ¡ÂºÂ£ng Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t chÃ¡Â»Â§ Ã„â€˜Ã¡Â»â„¢ng tÃ¡Â»Â« API SePay: id, sÃ¡Â»â€˜ tiÃ¡Â»Ân, nÃ¡Â»â„¢i dung, tham chiÃ¡ÂºÂ¿uÃ¢â‚¬Â¦
     """
     sepay_tx_id = models.BigIntegerField(
         primary_key=True,
-        db_comment="Khớp với provider_payment_id khi đã xử lý"
+        db_comment="KhÃ¡Â»â€ºp vÃ¡Â»â€ºi provider_payment_id khi Ã„â€˜ÃƒÂ£ xÃ¡Â»Â­ lÃƒÂ½"
     )
     transaction_date = models.DateTimeField(
-        db_comment="Thời gian giao dịch ngân hàng"
+        db_comment="ThÃ¡Â»Âi gian giao dÃ¡Â»â€¹ch ngÃƒÂ¢n hÃƒÂ ng"
     )
     account_number = models.CharField(
         max_length=50,
-        db_comment="STK nhận tiền"
+        db_comment="STK nhÃ¡ÂºÂ­n tiÃ¡Â»Ân"
     )
     amount_in = models.DecimalField(
         max_digits=20,
         decimal_places=2,
         default=Decimal('0.00'),
-        db_comment="Tiền vào (nạp ví/ thanh toán)"
+        db_comment="TiÃ¡Â»Ân vÃƒÂ o (nÃ¡ÂºÂ¡p vÃƒÂ­/ thanh toÃƒÂ¡n)"
     )
     amount_out = models.DecimalField(
         max_digits=20,
         decimal_places=2,
         default=Decimal('0.00'),
-        db_comment="Tiền ra (ít dùng)"
+        db_comment="TiÃ¡Â»Ân ra (ÃƒÂ­t dÃƒÂ¹ng)"
     )
     content = models.TextField(
         null=True,
         blank=True,
-        db_comment="Nội dung CK (chứa order_code để auto-match)"
+        db_comment="NÃ¡Â»â„¢i dung CK (chÃ¡Â»Â©a order_code Ã„â€˜Ã¡Â»Æ’ auto-match)"
     )
     reference_number = models.CharField(
         max_length=100,
         null=True,
         blank=True,
-        db_comment="Mã tham chiếu của ngân hàng"
+        db_comment="MÃƒÂ£ tham chiÃ¡ÂºÂ¿u cÃ¡Â»Â§a ngÃƒÂ¢n hÃƒÂ ng"
     )
     bank_code = models.CharField(
         max_length=10,
@@ -598,27 +604,27 @@ class PayBankTransaction(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Khớp được intent nào"
+        db_comment="KhÃ¡Â»â€ºp Ã„â€˜Ã†Â°Ã¡Â»Â£c intent nÃƒÂ o"
     )
     attempt = models.ForeignKey(
         PayPaymentAttempt,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Khớp được attempt nào"
+        db_comment="KhÃ¡Â»â€ºp Ã„â€˜Ã†Â°Ã¡Â»Â£c attempt nÃƒÂ o"
     )
     payment = models.ForeignKey(
         PayPayment,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Payment được tạo/chốt từ giao dịch này"
+        db_comment="Payment Ã„â€˜Ã†Â°Ã¡Â»Â£c tÃ¡ÂºÂ¡o/chÃ¡Â»â€˜t tÃ¡Â»Â« giao dÃ¡Â»â€¹ch nÃƒÂ y"
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pay_bank_transactions"
-        db_table_comment = "Bảng đối soát chủ động từ API SePay: id, số tiền, nội dung, tham chiếu…"
+        db_table_comment = "BÃ¡ÂºÂ£ng Ã„â€˜Ã¡Â»â€˜i soÃƒÂ¡t chÃ¡Â»Â§ Ã„â€˜Ã¡Â»â„¢ng tÃ¡Â»Â« API SePay: id, sÃ¡Â»â€˜ tiÃ¡Â»Ân, nÃ¡Â»â„¢i dung, tham chiÃ¡ÂºÂ¿uÃ¢â‚¬Â¦"
         indexes = [
             models.Index(fields=['intent'], name='idx_bank_tx_intent'),
             models.Index(fields=['reference_number'], name='idx_bank_tx_reference'),
@@ -647,41 +653,41 @@ class SeapayOrder(models.Model):
 
 class PaySymbolOrder(models.Model):
     """
-    Đơn hàng để mua quyền truy cập symbol. Có thể thanh toán trực tiếp qua SePay hoặc trừ ví nếu đã nạp.
+    Ã„ÂÃ†Â¡n hÃƒÂ ng Ã„â€˜Ã¡Â»Æ’ mua quyÃ¡Â»Ân truy cÃ¡ÂºÂ­p symbol. CÃƒÂ³ thÃ¡Â»Æ’ thanh toÃƒÂ¡n trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p qua SePay hoÃ¡ÂºÂ·c trÃ¡Â»Â« vÃƒÂ­ nÃ¡ÂºÂ¿u Ã„â€˜ÃƒÂ£ nÃ¡ÂºÂ¡p.
     """
     order_id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
         editable=False,
-        db_comment="ID đơn hàng"
+        db_comment="ID Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        db_comment="Người mua quyền truy cập symbol"
+        db_comment="NgÃ†Â°Ã¡Â»Âi mua quyÃ¡Â»Ân truy cÃ¡ÂºÂ­p symbol"
     )
     total_amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Tổng tiền cần trả cho đơn"
+        db_comment="TÃ¡Â»â€¢ng tiÃ¡Â»Ân cÃ¡ÂºÂ§n trÃ¡ÂºÂ£ cho Ã„â€˜Ã†Â¡n"
     )
     status = models.CharField(
         max_length=20,
         choices=OrderStatus.choices,
         default=OrderStatus.PENDING_PAYMENT,
-        db_comment="Trạng thái vòng đời đơn"
+        db_comment="TrÃ¡ÂºÂ¡ng thÃƒÂ¡i vÃƒÂ²ng Ã„â€˜Ã¡Â»Âi Ã„â€˜Ã†Â¡n"
     )
     payment_method = models.CharField(
         max_length=20,
         choices=PaymentMethod.choices,
         null=True,
         blank=True,
-        db_comment="wallet (trừ ví) hoặc sepay_transfer (QR/STK)"
+        db_comment="wallet (trÃ¡Â»Â« vÃƒÂ­) hoÃ¡ÂºÂ·c sepay_transfer (QR/STK)"
     )
     description = models.TextField(
         null=True,
         blank=True,
-        db_comment="Mô tả/ghi chú đơn hàng"
+        db_comment="MÃƒÂ´ tÃ¡ÂºÂ£/ghi chÃƒÂº Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     payment_intent = models.ForeignKey(
         'PayPaymentIntent',
@@ -695,7 +701,7 @@ class PaySymbolOrder(models.Model):
 
     class Meta:
         db_table = "pay_symbol_orders"
-        db_table_comment = "Đơn hàng để mua quyền truy cập symbol. Có thể thanh toán trực tiếp qua SePay hoặc trừ ví nếu đã nạp."
+        db_table_comment = "Ã„ÂÃ†Â¡n hÃƒÂ ng Ã„â€˜Ã¡Â»Æ’ mua quyÃ¡Â»Ân truy cÃ¡ÂºÂ­p symbol. CÃƒÂ³ thÃ¡Â»Æ’ thanh toÃƒÂ¡n trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p qua SePay hoÃ¡ÂºÂ·c trÃ¡Â»Â« vÃƒÂ­ nÃ¡ÂºÂ¿u Ã„â€˜ÃƒÂ£ nÃ¡ÂºÂ¡p."
         indexes = [
             models.Index(fields=['user', 'status'], name='idx_symbol_orders_user_status'),
             models.Index(fields=['status'], name='idx_symbol_orders_status'),
@@ -708,42 +714,58 @@ class PaySymbolOrder(models.Model):
 
 class PaySymbolOrderItem(models.Model):
     """
-    Chi tiết từng dòng sản phẩm trong đơn: symbol nào, thời hạn bao lâu.
+    Chi tiÃ¡ÂºÂ¿t tÃ¡Â»Â«ng dÃƒÂ²ng sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m trong Ã„â€˜Ã†Â¡n: symbol nÃƒÂ o, thÃ¡Â»Âi hÃ¡ÂºÂ¡n bao lÃƒÂ¢u.
     """
     order_item_id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
         editable=False,
-        db_comment="ID item đơn hàng"
+        db_comment="ID item Ã„â€˜Ã†Â¡n hÃƒÂ ng"
     )
     order = models.ForeignKey(
         PaySymbolOrder,
         on_delete=models.CASCADE,
         related_name='items',
-        db_comment="Đơn hàng chính"
+        db_comment="Ã„ÂÃ†Â¡n hÃƒÂ ng chÃƒÂ­nh"
     )
     symbol_id = models.BigIntegerField(
-        db_comment="Symbol là sản phẩm được bán"
+        db_comment="Symbol lÃƒÂ  sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m Ã„â€˜Ã†Â°Ã¡Â»Â£c bÃƒÂ¡n"
     )
     price = models.DecimalField(
         max_digits=18,
         decimal_places=2,
-        db_comment="Đơn giá tại thời điểm mua"
+        db_comment="Ã„ÂÃ†Â¡n giÃƒÂ¡ tÃ¡ÂºÂ¡i thÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m mua"
     )
     license_days = models.IntegerField(
         null=True,
         blank=True,
-        db_comment="Số ngày cấp quyền sử dụng symbol; null = trọn đời"
+        db_comment="SÃ¡Â»â€˜ ngÃƒÂ y cÃ¡ÂºÂ¥p quyÃ¡Â»Ân sÃ¡Â»Â­ dÃ¡Â»Â¥ng symbol; null = trÃ¡Â»Ân Ã„â€˜Ã¡Â»Âi"
+    )
+    auto_renew = models.BooleanField(
+        default=False,
+        db_comment="Mark this order item as enrolled in auto-renew"
+    )
+    cycle_days_override = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        db_comment="Override renewal cycle in days; None uses subscription default"
+    )
+    auto_renew_price = models.DecimalField(
+        max_digits=18,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        db_comment="Override price for subsequent renewals; None uses current price"
     )
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        db_comment="Thuộc tính thêm (phiên bản, biến thể, ...)"
+        db_comment="ThuÃ¡Â»â„¢c tÃƒÂ­nh thÃƒÂªm (phiÃƒÂªn bÃ¡ÂºÂ£n, biÃ¡ÂºÂ¿n thÃ¡Â»Æ’, ...)"
     )
 
     class Meta:
         db_table = "pay_symbol_order_items"
-        db_table_comment = "Chi tiết từng dòng sản phẩm trong đơn: symbol nào, thời hạn bao lâu."
+        db_table_comment = "Chi tiÃ¡ÂºÂ¿t tÃ¡Â»Â«ng dÃƒÂ²ng sÃ¡ÂºÂ£n phÃ¡ÂºÂ©m trong Ã„â€˜Ã†Â¡n: symbol nÃƒÂ o, thÃ¡Â»Âi hÃ¡ÂºÂ¡n bao lÃƒÂ¢u."
         indexes = [
             models.Index(fields=['order'], name='idx_symbol_order_items_order'),
             models.Index(fields=['symbol_id'], name='idx_symbol_order_items_symbol'),
@@ -753,11 +775,26 @@ class PaySymbolOrderItem(models.Model):
         return f"Order Item {self.order_item_id} - Symbol {self.symbol_id}"
 
 
+class PayUserSymbolLicenseManager(models.Manager):
+    def create(self, **kwargs):
+        is_lifetime = kwargs.pop('is_lifetime', None)
+        if is_lifetime is True:
+            kwargs['end_at'] = None
+        return super().create(**kwargs)
+
+
 class PayUserSymbolLicense(models.Model):
     """
-    Quyền sử dụng symbol để quyết định ai được nhận tín hiệu. 
-    Gia hạn bằng cách tạo license mới hoặc cập nhật end_at.
+    QuyÃ¡Â»Ân sÃ¡Â»Â­ dÃ¡Â»Â¥ng symbol Ã„â€˜Ã¡Â»Æ’ quyÃ¡ÂºÂ¿t Ã„â€˜Ã¡Â»â€¹nh ai Ã„â€˜Ã†Â°Ã¡Â»Â£c nhÃ¡ÂºÂ­n tÃƒÂ­n hiÃ¡Â»â€¡u. 
+    Gia hÃ¡ÂºÂ¡n bÃ¡ÂºÂ±ng cÃƒÂ¡ch tÃ¡ÂºÂ¡o license mÃ¡Â»â€ºi hoÃ¡ÂºÂ·c cÃ¡ÂºÂ­p nhÃ¡ÂºÂ­t end_at.
     """
+    objects = PayUserSymbolLicenseManager()
+
+    def __init__(self, *args, is_lifetime=None, **kwargs):
+        if is_lifetime is True:
+            kwargs.setdefault('end_at', None)
+        super().__init__(*args, **kwargs)
+
     license_id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
@@ -767,42 +804,51 @@ class PayUserSymbolLicense(models.Model):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        db_comment="User được cấp quyền"
+        db_comment="User Ã„â€˜Ã†Â°Ã¡Â»Â£c cÃ¡ÂºÂ¥p quyÃ¡Â»Ân"
     )
     symbol_id = models.BigIntegerField(
-        db_comment="Symbol được cấp quyền"
+        db_comment="Symbol Ã„â€˜Ã†Â°Ã¡Â»Â£c cÃ¡ÂºÂ¥p quyÃ¡Â»Ân"
     )
     order = models.ForeignKey(
         PaySymbolOrder,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_comment="Đơn hàng tạo ra license này"
+        db_comment="Ã„ÂÃ†Â¡n hÃƒÂ ng tÃ¡ÂºÂ¡o ra license nÃƒÂ y"
+    )
+    subscription = models.ForeignKey(
+        'setting.SymbolAutoRenewSubscription',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='licenses',
+        db_comment="Auto-renew subscription that governs this license"
     )
     status = models.CharField(
         max_length=20,
         choices=LicenseStatus.choices,
         default=LicenseStatus.ACTIVE,
-        db_comment="Trạng thái quyền dùng symbol"
+        db_comment="TrÃ¡ÂºÂ¡ng thÃƒÂ¡i quyÃ¡Â»Ân dÃƒÂ¹ng symbol"
     )
     start_at = models.DateTimeField(
         default=timezone.now,
-        db_comment="Thời điểm kích hoạt"
+        db_comment="ThÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m kÃƒÂ­ch hoÃ¡ÂºÂ¡t"
     )
     end_at = models.DateTimeField(
         null=True,
         blank=True,
-        db_comment="Thời điểm hết hạn; null = trọn đời"
+        db_comment="ThÃ¡Â»Âi Ã„â€˜iÃ¡Â»Æ’m hÃ¡ÂºÂ¿t hÃ¡ÂºÂ¡n; null = trÃ¡Â»Ân Ã„â€˜Ã¡Â»Âi"
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "pay_user_symbol_licenses"
-        db_table_comment = "Quyền sử dụng symbol để quyết định ai được nhận tín hiệu."
+        db_table_comment = "QuyÃ¡Â»Ân sÃ¡Â»Â­ dÃ¡Â»Â¥ng symbol Ã„â€˜Ã¡Â»Æ’ quyÃ¡ÂºÂ¿t Ã„â€˜Ã¡Â»â€¹nh ai Ã„â€˜Ã†Â°Ã¡Â»Â£c nhÃ¡ÂºÂ­n tÃƒÂ­n hiÃ¡Â»â€¡u."
         indexes = [
             models.Index(fields=['user', 'symbol_id'], name='idx_symbol_lic_user_symbol'),
             models.Index(fields=['status'], name='idx_symbol_lic_status'),
             models.Index(fields=['end_at'], name='idx_symbol_lic_end_at'),
+            models.Index(fields=['subscription'], name='idx_symbol_lic_subscription'),
         ]
         unique_together = [('user', 'symbol_id', 'start_at')]
 
@@ -811,7 +857,7 @@ class PayUserSymbolLicense(models.Model):
 
     @property
     def is_active(self):
-        """Kiểm tra license có còn hiệu lực không"""
+        """KiÃ¡Â»Æ’m tra license cÃƒÂ³ cÃƒÂ²n hiÃ¡Â»â€¡u lÃ¡Â»Â±c khÃƒÂ´ng"""
         if self.status != LicenseStatus.ACTIVE:
             return False
         if self.end_at and timezone.now() > self.end_at:
@@ -820,5 +866,20 @@ class PayUserSymbolLicense(models.Model):
 
     @property
     def is_lifetime(self):
-        """Kiểm tra có phải license trọn đời không"""
+        """KiÃ¡Â»Æ’m tra cÃƒÂ³ phÃ¡ÂºÂ£i license trÃ¡Â»Ân Ã„â€˜Ã¡Â»Âi khÃƒÂ´ng"""
         return self.end_at is None
+
+
+
+class IntentStatus(models.TextChoices):
+    PENDING = 'requires_payment_method', 'Pending'
+    PROCESSING = 'processing', 'Processing'
+    COMPLETED = 'succeeded', 'Completed'
+    FAILED = 'failed', 'Failed'
+    EXPIRED = 'expired', 'Expired'
+
+# Backwards compatibility alias for legacy imports
+PaySymbolLicense = PayUserSymbolLicense
+
+
+

@@ -99,9 +99,6 @@ def upsert_news(company: Company, rows: Iterable[Dict]) -> None:
             }
         )
 
-
-
-
 def upsert_events(company: Company, rows: Iterable[Dict]) -> None:
     """
     Upsert events với public_date và issue_date từ nguồn vnstock

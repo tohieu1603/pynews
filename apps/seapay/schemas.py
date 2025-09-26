@@ -33,7 +33,7 @@ class PaymentCallbackRequest(Schema):
     code: Optional[str] = None
     content: str 
     transferType: str
-    description: str
+    description: Optional[str] = None
     transferAmount: Decimal
     referenceCode: str
     accumulated: int
@@ -134,6 +134,7 @@ class CreateWalletTopupResponse(Schema):
     currency: str
     status: str
     qr_image_url: str
+    qr_code_url: str
     account_number: str
     account_name: str
     transfer_content: str
@@ -171,7 +172,7 @@ class SepayWebhookRequest(Schema):
     code: Optional[str] = None
     content: str
     transferType: str
-    description: str
+    description: Optional[str] = None
     transferAmount: Decimal
     referenceCode: str
     accumulated: Optional[int] = None
@@ -193,6 +194,9 @@ class SymbolOrderItemRequest(Schema):
     price: Decimal
     license_days: Optional[int] = None
     metadata: Optional[dict] = {}
+    auto_renew: bool = False
+    auto_renew_price: Optional[Decimal] = None
+    auto_renew_cycle_days: Optional[int] = None
 
 
 class CreateSymbolOrderRequest(Schema):
@@ -207,6 +211,9 @@ class SymbolOrderItemResponse(Schema):
     license_days: Optional[int]
     symbol_name: Optional[str] = None
     metadata: dict
+    auto_renew: bool = False
+    auto_renew_price: Optional[Decimal] = None
+    auto_renew_cycle_days: Optional[int] = None
 
 
 class CreateSymbolOrderResponse(Schema):
@@ -230,6 +237,7 @@ class ProcessWalletPaymentResponse(Schema):
     amount_charged: Decimal
     wallet_balance_after: Decimal
     licenses_created: int
+    subscriptions_updated: int | None = 0
 
 
 class CreateSepayPaymentResponse(Schema):
@@ -268,7 +276,7 @@ class SymbolOrderHistoryResponse(Schema):
     total_amount: Decimal
     status: str
     payment_method: str
-    description: str
+    description: Optional[str] = None
     created_at: str
     updated_at: str
     items: List[SymbolOrderItemResponse]
@@ -280,4 +288,3 @@ class PaginatedSymbolOrderHistory(Schema):
     page: int
     limit: int
     total_pages: int
-
