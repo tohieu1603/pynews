@@ -196,6 +196,10 @@ def qs_symbols_with_industries() -> QuerySet[Symbol]:
 def qs_symbol_name(symbol_name):
     return Symbol.objects.filter(name__iexact = symbol_name).only('id','name', 'exchange')
 
+def qs_symbols_like(symbol_name: str):
+    return Symbol.objects.filter(name__icontains=symbol_name)
+
+
 def upsert_subsidiary_relation(parent_company: Company, sub_company: Company, own_percent: Optional[float]) -> None:
     """
     Tạo quan hệ parent ↔ subsidiary

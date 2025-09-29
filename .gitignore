@@ -36,8 +36,8 @@ db.sqlite3
 media/
 staticfiles/
 # Ignore migrations generated per-environment
-apps/**/migrations/
-!apps/**/migrations/__init__.py
+# apps/**/migrations/
+# !apps/**/migrations/__init__.py
 
 # --- Environment / secrets ---
 .env

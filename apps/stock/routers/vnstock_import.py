@@ -89,11 +89,11 @@ def list_symbols_with_basic_info(request, limit: int = 10):
     return service.get_symbols(limit=limit)
 
 
-@router.get("/symbols/by-name/{symbol_name}", response=SymbolOutBasic)
-def get_symbol_by_name(request, symbol_name: str):
-    """Lấy thông tin symbol theo mã giao dịch (ví dụ: VCS)."""
+@router.get("/symbols/by-name/{symbol_name}", response=List[SymbolOutBasic])
+def get_symbol_by_name(request, symbol_name: str, limit: int = 20):
+    """Tìm kiếm symbol theo ký tự (ví dụ: VCS)."""
     service = SymbolService()
-    return service.get_symbol_payload_by_name(symbol_name.upper())
+    return service.search_symbols_by_name(symbol_name, limit=limit)
 
 
 @router.get("/stats")

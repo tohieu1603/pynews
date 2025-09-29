@@ -21,7 +21,7 @@ from apps.stock.utils.safe import (
     to_datetime,
     to_epoch_seconds,
 )
-from apps.stock.schemas import SymbolList
+from apps.stock.schemas import SymbolList, SymbolOutBasic
 
 class SymbolService:
     def __init__(
@@ -345,6 +345,18 @@ class SymbolService:
             "industries": industries,
             "company": company_payload,
         }
+
+    def search_symbols_by_name(self, symbol_name: str, limit: int = 20) -> List[SymbolOutBasic]:
+        term = (symbol_name or "").strip()
+        if not term:
+            return []
+        queryset = repo.qs_symbols_like(term).order_by('name', 'id')
+        if limit:
+            queryset = queryset[:limit]
+        return [
+            SymbolOutBasic(id=sym.id, name=sym.name, exchange=sym.exchange)
+            for sym in queryset
+        ]
 
     def get_symbol_payload_by_name(self, symbol_name: str) -> Dict[str, Any]:
         symbol_key = symbol_name.strip()
