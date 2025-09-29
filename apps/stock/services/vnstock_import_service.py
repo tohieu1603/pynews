@@ -7,14 +7,24 @@ from vnstock import Listing, Company
 from apps.stock.models import Symbol
 from apps.stock.repositories import repositories as repo
 from apps.stock.utils.safe import safe_decimal, safe_int, safe_str, to_datetime
+from apps.stock.services.cache_service import VNStockCacheService
+from apps.stock.services.rate_limiter import get_rate_limiter
+from apps.stock.utils.pandas_compat import suppress_pandas_warnings
+
+# Suppress pandas warnings
+suppress_pandas_warnings()
 
 
 class VnstockImportService:
     """Service chuyên dụng để import dữ liệu từ vnstock vào database"""
     
-    def __init__(self, per_symbol_sleep: float = 0.0):  # Default no sleep for maximum speed
+    def __init__(self, per_symbol_sleep: float = 0.5):  # Tăng sleep time để tránh rate limit
         self.per_symbol_sleep = per_symbol_sleep
         self.listing = Listing()
+        # Initialize cache service for better performance
+        self.cache_service = VNStockCacheService()
+        # Initialize rate limiter
+        self.rate_limiter = get_rate_limiter()
         # Company client sẽ được khởi tạo khi cần với từng symbol
 
     def _handle_rate_limit_error(self, error, symbol_name=None):
@@ -65,8 +75,8 @@ class VnstockImportService:
         results = []
         
         try:
-            # Bước 1: Lấy tất cả symbols từ vnstock 1 lần duy nhất
-            all_symbols_df = self._fetch_all_symbols_from_vnstock()
+            # Bước 1: Lấy tất cả symbols từ vnstock 1 lần duy nhất với cache
+            all_symbols_df = self._fetch_all_symbols_from_vnstock(exchange)
             if all_symbols_df is None or all_symbols_df.empty:
                 print("Failed to fetch symbols from vnstock")
                 return results
@@ -86,25 +96,17 @@ class VnstockImportService:
             print(f"Error in import_all_symbols_from_vnstock: {e}")
             return results
     
-    def _fetch_all_symbols_from_vnstock(self):
-        """Lấy tất cả symbols từ vnstock"""
-        print("Fetching all symbols from vnstock...")
-        
-        # Thử các method để lấy tất cả symbols
-        for method_name, method_func in [
-            ("symbols_by_exchange", lambda: self.listing.symbols_by_exchange()),
-            ("all_symbols", lambda: self.listing.all_symbols())
-        ]:
-            try:
-                print(f"Trying {method_name}...")
-                symbols_df = method_func()
-                if symbols_df is not None and not symbols_df.empty:
-                    print(f"Success with {method_name}: {len(symbols_df)} total symbols")
-                    return symbols_df
-            except Exception as e:
-                print(f"{method_name} failed: {e}")
-                continue
-        
+    def _fetch_all_symbols_from_vnstock(self, exchange: str = "HSX"):
+        """Lấy tất cả symbols từ vnstock với cache"""
+        print(f"Fetching all symbols from vnstock for {exchange}...")
+
+        # Sử dụng cache service để tăng tốc
+        symbols_df = self.cache_service.fetch_symbols_with_cache(exchange)
+
+        if symbols_df is not None and not symbols_df.empty:
+            print(f"Got {len(symbols_df)} symbols for {exchange}")
+            return symbols_df
+
         return None
     
     def _filter_symbols_by_exchange(self, all_symbols_df, exchange: str):
@@ -241,12 +243,10 @@ class VnstockImportService:
             return results
     
     def _fetch_company_info_from_vnstock(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Lấy thông tin company từ vnstock theo symbol sử dụng bundle approach"""
+        """Lấy thông tin company từ vnstock theo symbol sử dụng bundle approach với cache"""
         try:
-            from apps.stock.clients.vnstock_client import VNStockClient
-            
-            client = VNStockClient()
-            bundle, ok = client.fetch_company_bundle_safe(symbol)
+            # Sử dụng cache service để tăng tốc
+            bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol)
             
             if not ok or not bundle:
                 print(f"Failed to fetch bundle for {symbol}")
@@ -405,17 +405,10 @@ class VnstockImportService:
         results = []
         
         try:
-            # Bước 1: Lấy data từ vnstock với safe API call
+            # Bước 1: Lấy data từ vnstock với cache
             print("Fetching industries and symbols mapping from vnstock...")
-            
-            industries_icb_df = self._safe_api_call(
-                lambda: self.listing.industries_icb(),
-                "industries_icb"
-            )
-            symbols_by_industries_df = self._safe_api_call(
-                lambda: self.listing.symbols_by_industries(),
-                "symbols_by_industries"
-            )
+
+            industries_icb_df, symbols_by_industries_df = self.cache_service.fetch_industries_with_cache()
             
             if industries_icb_df is None or industries_icb_df.empty:
                 print("No industries_icb data found")
@@ -541,12 +534,9 @@ class VnstockImportService:
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
         
-        # Sử dụng VNStockClient để tăng tốc
-        from apps.stock.clients.vnstock_client import VNStockClient
-        client = VNStockClient(max_retries=2, wait_seconds=30) 
-        
+        # Sử dụng cache service để tăng tốc
         processed = 0
-        batch_size = 10 
+        batch_size = 20  # Increased batch size 
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -554,15 +544,15 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    symbol_name = symbol.name  
-                    
-                    company_client = Company(symbol=symbol.name, source="VCI")
-                    shareholders_df = company_client.shareholders()
-                    if (shareholders_df is None or shareholders_df.empty) and symbol.name:
+                    symbol_name = symbol.name
 
-                        company_client_vci = Company(symbol=symbol.name, source="TCBS")
-                        shareholders_df = company_client_vci.shareholders()
-                    
+                    # Sử dụng cache để lấy bundle data
+                    bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+                    if not bundle:
+                        print(f"No bundle data for {symbol.name}")
+                        continue
+
+                    shareholders_df = bundle.get("shareholders_df")
                     if shareholders_df is None or shareholders_df.empty:
                         print(f"No shareholders data for {symbol.name}")
                         continue
@@ -592,11 +582,12 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Add sleep to avoid rate limit
+                    # Apply rate limiting and sleep
+                    self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(1.0)  # Default 1 second sleep to be safe
+                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
@@ -609,21 +600,18 @@ class VnstockImportService:
     
     def import_officers_for_all_symbols(self) -> List[Dict[str, Any]]:
         """
-        Import officers cho tất cả symbols có company - optimized version
+        Import officers cho tất cả symbols có company - optimized version with cache
         """
         print("Starting import officers for all symbols...")
         results = []
-        
+
         symbols = Symbol.objects.filter(company__isnull=False).select_related('company')
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
-        
-        # Sử dụng VNStockClient để tăng tốc
-        from apps.stock.clients.vnstock_client import VNStockClient
-        client = VNStockClient(max_retries=2, wait_seconds=30)
-        
+
+        # Sử dụng cache service để tăng tốc
         processed = 0
-        batch_size = 10
+        batch_size = 20  # Increased batch size
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -631,11 +619,8 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với officers - safe API call
-                    symbol_name = symbol.name  # Capture for lambda
-                    bundle = self._safe_api_call(
-                        lambda s=symbol_name: client.fetch_company_bundle_safe(s)[0]
-                    )
+                    # Lấy bundle data với officers từ cache
+                    bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
                     
@@ -668,11 +653,12 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Add sleep to avoid rate limit
+                    # Apply rate limiting and sleep
+                    self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(1.0)  # Default 1 second sleep to be safe
+                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
@@ -685,21 +671,18 @@ class VnstockImportService:
     
     def import_events_for_all_symbols(self) -> List[Dict[str, Any]]:
         """
-        Import events cho tất cả symbols có company - optimized version
+        Import events cho tất cả symbols có company - optimized version with cache
         """
         print("Starting import events for all symbols...")
         results = []
-        
+
         symbols = Symbol.objects.filter(company__isnull=False).select_related('company')
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
-        
-        # Sử dụng VNStockClient để tăng tốc
-        from apps.stock.clients.vnstock_client import VNStockClient
-        client = VNStockClient(max_retries=2, wait_seconds=30)
-        
+
+        # Sử dụng cache service để tăng tốc
         processed = 0
-        batch_size = 10
+        batch_size = 20  # Increased batch size
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -707,11 +690,8 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với events - safe API call
-                    symbol_name = symbol.name  # Capture for lambda
-                    bundle = self._safe_api_call(
-                        lambda s=symbol_name: client.fetch_company_bundle_safe(s)[0]
-                    )
+                    # Lấy bundle data với events từ cache
+                    bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
                     
@@ -744,11 +724,12 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Add sleep to avoid rate limit
+                    # Apply rate limiting and sleep
+                    self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(1.0)  # Default 1 second sleep to be safe
+                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
@@ -761,27 +742,24 @@ class VnstockImportService:
 
     def import_sub_companies_for_all_symbols(self) -> List[Dict[str, Any]]:
         """
-        Import sub companies (subsidiaries) cho tất cả symbols - SINGLE API CALL + BUNDLE VERSION
+        Import sub companies (subsidiaries) cho tất cả symbols - optimized with cache
         """
-        print("Starting import sub companies for all symbols (bundle approach)...")
+        print("Starting import sub companies for all symbols (cache approach)...")
         results = []
-        
+
         # Bước 1: Lấy tất cả symbols có company
         symbols = Symbol.objects.filter(company__isnull=False).select_related('company')
         total_symbols = symbols.count()
-        
+
         if not total_symbols:
             print("No symbols with companies found")
             return results
-            
+
         print(f"Found {total_symbols} symbols with companies")
-        
-        # Bước 2: Sử dụng bundle approach để lấy subsidiaries data
-        from apps.stock.clients.vnstock_client import VNStockClient
-        client = VNStockClient(max_retries=2, wait_seconds=30)
-        
+
+        # Bước 2: Sử dụng cache service để lấy subsidiaries data
         processed = 0
-        batch_size = 20  # Larger batch for sub companies
+        batch_size = 25  # Larger batch for sub companies
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -789,11 +767,8 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với subsidiaries - safe API call
-                    symbol_name = symbol.name  # Capture for lambda
-                    bundle = self._safe_api_call(
-                        lambda s=symbol_name: client.fetch_company_bundle_safe(s)[0]
-                    )
+                    # Lấy bundle data với subsidiaries từ cache
+                    bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
                     
@@ -824,11 +799,12 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Add sleep to avoid rate limit
+                    # Apply rate limiting and sleep
+                    self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(1.0)  # Default 1 second sleep to be safe
+                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")

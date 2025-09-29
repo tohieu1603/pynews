@@ -5,6 +5,11 @@ import pandas as pd
 from vnstock import Company as VNCompany
 from vnstock import Listing
 from vnstock.explorer.vci.company import Company as VCIExplorerCompany
+from apps.stock.services.rate_limiter import get_rate_limiter
+from apps.stock.utils.pandas_compat import suppress_pandas_warnings
+
+# Suppress pandas warnings
+suppress_pandas_warnings()
 
 
 class VNStockClient:
@@ -13,9 +18,10 @@ class VNStockClient:
     Cung cấp helper để iterate symbols và fetch thông tin công ty.
     """
 
-    def __init__(self, max_retries: int = 5, wait_seconds: int = 60):
+    def __init__(self, max_retries: int = 3, wait_seconds: int = 45):
         self.max_retries = max_retries
         self.wait_seconds = wait_seconds
+        self.rate_limiter = get_rate_limiter()
 
     def _df_or_empty(self, df: Optional[pd.DataFrame]) -> pd.DataFrame:
         """
@@ -106,11 +112,14 @@ class VNStockClient:
         self, symbol: str
     ) -> Tuple[Dict[str, pd.DataFrame], bool]:
         """
-        Lấy bundle thông tin công ty từ cả 2 nguồn TCBS và VCI.
+        Lấy bundle thông tin công ty từ cả 2 nguồn TCBS và VCI với rate limiting.
         """
         retries = 0
         while retries <= self.max_retries:
             try:
+                # Apply rate limiting
+                self.rate_limiter.wait_if_needed(f"company_bundle_{symbol}")
+
                 vn_company_tcbs = VNCompany(symbol=symbol, source="TCBS")
                 vn_company_vci = VNCompany(symbol=symbol, source="VCI")
                 listing = Listing()
@@ -130,10 +139,12 @@ class VNStockClient:
 
             except SystemExit:
                 retries += 1
+                # Tăng thời gian wait với exponential backoff
+                wait_time = self.wait_seconds * (2 ** (retries - 1))
                 print(
-                    f"⚠️ Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {self.wait_seconds}s..."
+                    f"⚠️ Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {wait_time}s..."
                 )
-                time.sleep(self.wait_seconds)
+                time.sleep(wait_time)
 
             except Exception as e:
                 print(f"Error {symbol}: {e}")
@@ -145,13 +156,16 @@ class VNStockClient:
         self, symbol: str
     ) -> Tuple[Dict[str, pd.DataFrame], bool]:
         """
-        Safe/robust variant of fetch_company_bundle.
+        Safe/robust variant of fetch_company_bundle với rate limiting.
         - Wraps each VNStock call in its own try/except.
         - Returns partial bundle; ok=True if TCBS overview is available.
         """
         retries = 0
         while retries <= self.max_retries:
             try:
+                # Apply rate limiting
+                self.rate_limiter.wait_if_needed(f"company_bundle_safe_{symbol}")
+
                 listing = Listing()
                 vn_company_tcbs = VNCompany(symbol=symbol, source="TCBS")
                 vn_company_vci = VNCompany(symbol=symbol, source="VCI")
@@ -217,10 +231,12 @@ class VNStockClient:
 
             except SystemExit:
                 retries += 1
+                # Tăng thời gian wait với exponential backoff
+                wait_time = self.wait_seconds * (2 ** (retries - 1))
                 print(
-                    f"Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {self.wait_seconds}s..."
+                    f"⚠️ Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {wait_time}s..."
                 )
-                time.sleep(self.wait_seconds)
+                time.sleep(wait_time)
             except Exception as e:
                 print(f"Error {symbol}: {e}")
                 return {}, False

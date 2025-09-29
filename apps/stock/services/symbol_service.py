@@ -14,6 +14,7 @@ from apps.stock.services.industry_resolver import IndustryResolver
 from apps.stock.services.company_processor import CompanyProcessor
 from apps.stock.services.payload_builder import PayloadBuilder
 from apps.stock.services.fetch_service import FetchService
+from apps.stock.services.cache_service import VNStockCacheService
 from apps.stock.utils.safe import (
     safe_decimal,
     safe_int,
@@ -25,12 +26,12 @@ from apps.stock.schemas import SymbolList, SymbolOutBasic
 
 class SymbolService:
     def __init__(
-        self, vn_client: Optional[VNStockClient] = None, per_symbol_sleep: float = 1.0,
-        max_workers: int = 5, batch_size: int = 10
+        self, vn_client: Optional[VNStockClient] = None, per_symbol_sleep: float = 0.2,
+        max_workers: int = 10, batch_size: int = 20
     ):
         self.vn_client = vn_client or VNStockClient()
         self.per_symbol_sleep = per_symbol_sleep
-        self.max_workers = max_workers 
+        self.max_workers = max_workers
         self.batch_size = batch_size
         # Initialize helper services
         self.industry_resolver = IndustryResolver()
@@ -40,6 +41,8 @@ class SymbolService:
             max_retries=getattr(self.vn_client, 'max_retries', 5),
             wait_seconds=getattr(self.vn_client, 'wait_seconds', 60)
         )
+        # Initialize cache service for better performance
+        self.cache_service = VNStockCacheService()
 
     # -------- Delegation methods to helper services --------
     def _fetch_shareholders_df(self, symbol_name: str) -> pd.DataFrame:

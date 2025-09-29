@@ -10,3 +10,4 @@ django-cors-headers
 aiohttp
 django-debug-toolbar>=4.0.0
 sqlparse>=0.5.0
+    

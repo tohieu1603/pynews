@@ -9,6 +9,8 @@ from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList, SubCompanyOut,
 from apps.stock.services.symbol_service import SymbolService
 from typing import List
 from apps.stock.services.vnstock_import_service import VnstockImportService
+from apps.stock.services.cache_service import VNStockCacheService
+from apps.stock.services.rate_limiter import get_rate_limiter
 
 router = Router(tags=["vnstock-import"])
 
@@ -153,3 +155,92 @@ def get_database_stats(request):
         },
         "by_exchange": list(exchange_stats)
     }
+
+
+@router.get("/cache/stats")
+def get_cache_stats(request):
+    """Lấy thống kê cache performance"""
+    cache_service = VNStockCacheService()
+    return cache_service.get_cache_stats()
+
+
+@router.post("/cache/clear")
+def clear_cache(request, symbol: str = None):
+    """Xóa cache cho symbol cụ thể hoặc toàn bộ cache"""
+    cache_service = VNStockCacheService()
+
+    if symbol:
+        cache_service.clear_symbol_cache(symbol.upper())
+        return {"message": f"Cache cleared for symbol: {symbol.upper()}"}
+    else:
+        cache_service.clear_cache()
+        return {"message": "All cache cleared"}
+
+
+@router.get("/rate-limit/stats")
+def get_rate_limit_stats(request):
+    """Lấy thống kê rate limiting"""
+    rate_limiter = get_rate_limiter()
+    return rate_limiter.get_stats()
+
+
+@router.post("/rate-limit/reset")
+def reset_rate_limit_stats(request):
+    """Reset rate limiting statistics"""
+    rate_limiter = get_rate_limiter()
+    rate_limiter.reset_stats()
+    return {"message": "Rate limit statistics reset"}
+
+
+@router.post("/import/fast")
+def fast_import_with_cache(request, exchange: str = "HSX"):
+    """Import nhanh sử dụng cache service và rate limiting"""
+    service = VnstockImportService(per_symbol_sleep=0.5)  # Increased sleep time
+
+    results = {
+        "symbols": [],
+        "companies": [],
+        "industries": [],
+        "shareholders": [],
+        "officers": [],
+        "events": [],
+        "sub_companies": []
+    }
+
+    try:
+        # Import symbols
+        print("=== Starting fast import with cache ===")
+        results["symbols"] = service.import_all_symbols_from_vnstock(exchange)
+
+        # Import companies
+        results["companies"] = service.import_companies_from_vnstock(exchange)
+
+        # Import industries
+        results["industries"] = service.import_industries_for_symbols()
+
+        # Import related data with cache
+        results["shareholders"] = service.import_shareholders_for_all_symbols()
+        results["officers"] = service.import_officers_for_all_symbols()
+        results["events"] = service.import_events_for_all_symbols()
+        results["sub_companies"] = service.import_sub_companies_for_all_symbols()
+
+        return {
+            "message": "Fast import completed with cache optimization",
+            "exchange": exchange,
+            "summary": {
+                "symbols_imported": len(results["symbols"]),
+                "companies_imported": len(results["companies"]),
+                "industries_mapped": len(results["industries"]),
+                "shareholders_imported": len(results["shareholders"]),
+                "officers_imported": len(results["officers"]),
+                "events_imported": len(results["events"]),
+                "sub_companies_imported": len(results["sub_companies"])
+            },
+            "detailed_results": results
+        }
+
+    except Exception as e:
+        return {
+            "error": f"Fast import failed: {str(e)}",
+            "partial_results": results
+        }

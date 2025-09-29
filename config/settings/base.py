@@ -177,3 +177,17 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
 
 CORS_ALLOW_CREDENTIALS = True
+
+# =========================
+# CACHE SETTINGS FOR VNSTOCK API
+# =========================
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'vnstock-cache',
+        'TIMEOUT': 60 * 60 * 6,  # 6 hours default
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+        }
+    }
+}
