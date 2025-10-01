@@ -17,7 +17,7 @@ suppress_pandas_warnings()
 
 class VnstockImportService:
     """Service chuyên dụng để import dữ liệu từ vnstock vào database"""
-    
+
     def __init__(self, per_symbol_sleep: float = 0.5):  # Tăng sleep time để tránh rate limit
         self.per_symbol_sleep = per_symbol_sleep
         self.listing = Listing()
@@ -26,6 +26,172 @@ class VnstockImportService:
         # Initialize rate limiter
         self.rate_limiter = get_rate_limiter()
         # Company client sẽ được khởi tạo khi cần với từng symbol
+
+    def import_all_complete(self, exchange: str = "HSX", force_update: bool = False) -> Dict[str, Any]:
+        """
+        Import ALL stock data (symbols, companies, industries, shareholders, officers, events, sub_companies)
+        for all symbols with detailed logging for each table.
+
+        Args:
+            exchange: Exchange to import (HSX, HNX, UPCOM)
+            force_update: If False (default), skip symbols that already have data.
+                         If True, re-import all symbols (to get latest data from vnstock).
+        """
+        from apps.stock.models import Company, ShareHolder, Officers, Events, SubCompany
+
+        mode_text = "FORCE UPDATE MODE" if force_update else "RESUME MODE"
+
+        result = {
+            "exchange": exchange,
+            "mode": mode_text,
+            "total_symbols": 0,
+            "symbols_processed": 0,
+            "symbols_failed": 0,
+            "total_companies": 0,
+            "total_industries": 0,
+            "total_shareholders": 0,
+            "total_officers": 0,
+            "total_events": 0,
+            "total_sub_companies": 0,
+            "errors": [],
+            "details": []
+        }
+
+        print(f"\n{'='*60}")
+        print(f"STOCK IMPORT - {mode_text}")
+        print(f"Exchange: {exchange}")
+        print(f"{'='*60}\n")
+
+        try:
+            # Step 1: Import Symbols
+            print(f"[1/7] → Importing Symbols from {exchange}...", end=" ")
+            symbols_result = self.import_all_symbols_from_vnstock(exchange)
+            result["total_symbols"] = len(symbols_result)
+            print(f"✓ SUCCESS ({len(symbols_result)} symbols)")
+
+            # Get all symbols for processing
+            symbols = Symbol.objects.all().order_by('name')
+
+            # Filter symbols if not force_update
+            if not force_update:
+                symbols_to_process = []
+                for symbol in symbols:
+                    has_company = hasattr(symbol, 'company') and symbol.company is not None
+                    has_shareholders = has_company and ShareHolder.objects.filter(company=symbol.company).exists()
+                    has_officers = has_company and Officers.objects.filter(company=symbol.company).exists()
+                    has_events = has_company and Events.objects.filter(company=symbol.company).exists()
+                    has_subs = has_company and SubCompany.objects.filter(company=symbol.company).exists()
+
+                    # Process if missing any data
+                    if not (has_company and has_shareholders and has_officers and has_events and has_subs):
+                        symbols_to_process.append(symbol)
+
+                symbols = symbols_to_process
+                print(f"  ℹ Resume mode: {len(symbols)} symbols need processing\n")
+            else:
+                print(f"  ℹ Force update: Processing all {symbols.count()} symbols\n")
+
+            # Step 2: Import Companies
+            print(f"[2/7] → Importing Companies...", end=" ")
+            companies_result = self.import_companies_from_vnstock(exchange)
+            result["total_companies"] = len(companies_result)
+            print(f"✓ SUCCESS ({len(companies_result)} companies)")
+
+            # Step 3: Import Industries
+            print(f"[3/7] → Importing Industries...", end=" ")
+            industries_result = self.import_industries_for_symbols()
+            result["total_industries"] = len(industries_result)
+            print(f"✓ SUCCESS ({len(industries_result)} mappings)")
+
+            # Step 4-7: Import related data for each symbol
+            total_symbols = len(symbols)
+            for idx, symbol in enumerate(symbols, 1):
+                symbol_detail = {
+                    "symbol": symbol.name,
+                    "success": False,
+                    "shareholders": 0,
+                    "officers": 0,
+                    "events": 0,
+                    "sub_companies": 0,
+                    "errors": []
+                }
+
+                print(f"\n[{idx}/{total_symbols}] Processing: {symbol.name}")
+
+                try:
+                    if not hasattr(symbol, 'company') or symbol.company is None:
+                        print(f"  ⊘ SKIPPED: No company data")
+                        symbol_detail["errors"].append("No company data")
+                        result["symbols_failed"] += 1
+                        continue
+
+                    # Import Shareholders
+                    print(f"  → Importing Shareholders...", end=" ")
+                    sh_result = self._import_shareholders_for_symbol(symbol)
+                    symbol_detail["shareholders"] = sh_result.get("count", 0)
+                    result["total_shareholders"] += symbol_detail["shareholders"]
+                    print(f"✓ SUCCESS ({symbol_detail['shareholders']} records)")
+
+                    # Import Officers
+                    print(f"  → Importing Officers...", end=" ")
+                    off_result = self._import_officers_for_symbol(symbol)
+                    symbol_detail["officers"] = off_result.get("count", 0)
+                    result["total_officers"] += symbol_detail["officers"]
+                    print(f"✓ SUCCESS ({symbol_detail['officers']} records)")
+
+                    # Import Events
+                    print(f"  → Importing Events...", end=" ")
+                    evt_result = self._import_events_for_symbol(symbol)
+                    symbol_detail["events"] = evt_result.get("count", 0)
+                    result["total_events"] += symbol_detail["events"]
+                    print(f"✓ SUCCESS ({symbol_detail['events']} records)")
+
+                    # Import Sub Companies
+                    print(f"  → Importing Sub Companies...", end=" ")
+                    sub_result = self._import_sub_companies_for_symbol(symbol)
+                    symbol_detail["sub_companies"] = sub_result.get("count", 0)
+                    result["total_sub_companies"] += symbol_detail["sub_companies"]
+                    print(f"✓ SUCCESS ({symbol_detail['sub_companies']} records)")
+
+                    symbol_detail["success"] = True
+                    result["symbols_processed"] += 1
+                    print(f"  ✓ COMPLETED: All tables imported successfully")
+
+                except Exception as e:
+                    error_msg = f"Import error: {str(e)}"
+                    symbol_detail["errors"].append(error_msg)
+                    result["symbols_failed"] += 1
+                    print(f"  ✗ FAILED: {error_msg}")
+
+                finally:
+                    result["details"].append(symbol_detail)
+                    if self.per_symbol_sleep > 0:
+                        time.sleep(self.per_symbol_sleep)
+
+            # Final summary
+            print(f"\n{'='*60}")
+            print(f"STOCK IMPORT COMPLETE SUMMARY")
+            print(f"{'='*60}")
+            print(f"Mode:                 {mode_text}")
+            print(f"Exchange:             {exchange}")
+            print(f"Total Symbols:        {result['total_symbols']}")
+            print(f"Processed:            {result['symbols_processed']}")
+            print(f"Failed:               {result['symbols_failed']}")
+            print(f"Companies:            {result['total_companies']} records")
+            print(f"Industries:           {result['total_industries']} mappings")
+            print(f"Shareholders:         {result['total_shareholders']} records")
+            print(f"Officers:             {result['total_officers']} records")
+            print(f"Events:               {result['total_events']} records")
+            print(f"Sub Companies:        {result['total_sub_companies']} records")
+            print(f"{'='*60}\n")
+
+            return result
+
+        except Exception as e:
+            error_msg = f"Import failed: {str(e)}"
+            result["errors"].append(error_msg)
+            print(f"\n✗ IMPORT FAILED: {error_msg}")
+            return result
 
     def _handle_rate_limit_error(self, error, symbol_name=None):
         """Handle rate limit errors gracefully"""
@@ -814,4 +980,154 @@ class VnstockImportService:
         
         print(f"Sub companies import completed! Processed {processed}/{total_symbols} symbols, {len(results)} successful")
         return results
+
+    # Helper methods for import_all_complete
+    def _import_shareholders_for_symbol(self, symbol: Symbol) -> Dict[str, Any]:
+        """Import shareholders for a single symbol"""
+        result = {"symbol": symbol.name, "count": 0, "errors": []}
+
+        try:
+            if not hasattr(symbol, 'company') or symbol.company is None:
+                return result
+
+            bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+            if not ok or not bundle:
+                return result
+
+            shareholders_df = bundle.get("shareholders_df")
+            if shareholders_df is None or shareholders_df.empty:
+                return result
+
+            from apps.stock.models import ShareHolder
+
+            for _, row in shareholders_df.iterrows():
+                try:
+                    repo.upsert_shareholder({
+                        'company': symbol.company,
+                        'shareholder_name': safe_str(row.get('shareholder_name') or row.get('name')),
+                        'shares': safe_int(row.get('shares') or row.get('ownPercent')),
+                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
+                    })
+                    result["count"] += 1
+                except Exception:
+                    continue
+
+        except Exception as e:
+            result["errors"].append(str(e))
+
+        return result
+
+    def _import_officers_for_symbol(self, symbol: Symbol) -> Dict[str, Any]:
+        """Import officers for a single symbol"""
+        result = {"symbol": symbol.name, "count": 0, "errors": []}
+
+        try:
+            if not hasattr(symbol, 'company') or symbol.company is None:
+                return result
+
+            bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+            if not ok or not bundle:
+                return result
+
+            officers_df = bundle.get("officers_df")
+            if officers_df is None or officers_df.empty:
+                return result
+
+            from apps.stock.models import Officers
+
+            for _, row in officers_df.iterrows():
+                try:
+                    repo.upsert_officer({
+                        'company': symbol.company,
+                        'officer_name': safe_str(row.get('officer_name') or row.get('name')),
+                        'position': safe_str(row.get('position')),
+                        'shares': safe_int(row.get('shares') or row.get('ownPercent')),
+                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
+                    })
+                    result["count"] += 1
+                except Exception:
+                    continue
+
+        except Exception as e:
+            result["errors"].append(str(e))
+
+        return result
+
+    def _import_events_for_symbol(self, symbol: Symbol) -> Dict[str, Any]:
+        """Import events for a single symbol"""
+        result = {"symbol": symbol.name, "count": 0, "errors": []}
+
+        try:
+            if not hasattr(symbol, 'company') or symbol.company is None:
+                return result
+
+            bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+            if not ok or not bundle:
+                return result
+
+            events_df = bundle.get("events_df")
+            if events_df is None or events_df.empty:
+                return result
+
+            from apps.stock.models import Events
+
+            for _, row in events_df.iterrows():
+                try:
+                    repo.upsert_event({
+                        'company': symbol.company,
+                        'event_name': safe_str(row.get('event_name') or row.get('eventName')),
+                        'event_code': safe_str(row.get('event_code') or row.get('eventCode')),
+                        'event_date': to_datetime(row.get('event_date') or row.get('exrightDate')),
+                        'ex_right_date': to_datetime(row.get('ex_right_date') or row.get('exrightDate')),
+                        'record_date': to_datetime(row.get('record_date') or row.get('recordDate')),
+                        'issue_date': to_datetime(row.get('issue_date') or row.get('issueDate')),
+                        'ratio': safe_str(row.get('ratio')),
+                        'exercise_price': safe_decimal(row.get('exercise_price') or row.get('exercisePrice')),
+                        'exercise_ratio': safe_str(row.get('exercise_ratio') or row.get('exerciseRatio')),
+                    })
+                    result["count"] += 1
+                except Exception:
+                    continue
+
+        except Exception as e:
+            result["errors"].append(str(e))
+
+        return result
+
+    def _import_sub_companies_for_symbol(self, symbol: Symbol) -> Dict[str, Any]:
+        """Import sub companies for a single symbol"""
+        result = {"symbol": symbol.name, "count": 0, "errors": []}
+
+        try:
+            if not hasattr(symbol, 'company') or symbol.company is None:
+                return result
+
+            bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+            if not ok or not bundle:
+                return result
+
+            subsidiaries_df = bundle.get("subsidiaries_df")
+            if subsidiaries_df is None or subsidiaries_df.empty:
+                return result
+
+            from apps.stock.models import SubCompany
+
+            for _, row in subsidiaries_df.iterrows():
+                try:
+                    repo.upsert_sub_company({
+                        'company': symbol.company,
+                        'subsidiary_name': safe_str(row.get('subsidiary_name') or row.get('companyName')),
+                        'charter_capital': safe_int(row.get('charter_capital') or row.get('charterCapital')),
+                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
+                        'establish_date': to_datetime(row.get('establish_date') or row.get('establishDate')),
+                        'business': safe_str(row.get('business')),
+                    })
+                    result["count"] += 1
+                except Exception:
+                    continue
+
+        except Exception as e:
+            result["errors"].append(str(e))
+
+        return result
 

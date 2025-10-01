@@ -36,7 +36,7 @@ class ImportSummarySchema(Schema):
     results: List[ImportResultSchema]
 
 
-@router.post("/import/all", response=ImportSummarySchema)
+@router.post("/import/balance/all", response=ImportSummarySchema)
 def import_all_financials(request):
     """Import financial data for ALL symbols in database."""
     try:
@@ -163,6 +163,70 @@ def import_ratio_all(request):
         )
     except Exception as e:
         raise HttpError(500, f"Error importing ratios: {str(e)}")
+
+
+class ImportCompleteResultSchema(Schema):
+    symbol: str
+    success: bool
+    balance_sheets: int = 0
+    income_statements: int = 0
+    cash_flows: int = 0
+    ratios: int = 0
+    errors: List[str] = []
+
+
+class ImportCompleteSummarySchema(Schema):
+    total_symbols: int
+    successful_imports: int
+    failed_imports: int
+    total_balance_sheets: int
+    total_income_statements: int
+    total_cash_flows: int
+    total_ratios: int
+    processing_time: float
+    results: List[ImportCompleteResultSchema]
+
+
+@router.post("/import/all-complete", response=ImportCompleteSummarySchema)
+def import_all_complete(request, force_update: bool = False):
+    """
+    Import ALL financial data (balance sheet, income statement, cash flow, ratio)
+    for ALL symbols in database with detailed logging for each table.
+
+    Query Parameters:
+    - force_update (bool):
+        - False (default): Resume mode - only import symbols missing data
+        - True: Force update mode - re-import all symbols to get latest data
+    """
+    try:
+        start_time = time.time()
+        service = CalculateService()
+        result = service.import_all_complete(force_update=force_update)
+        processing_time = time.time() - start_time
+
+        return ImportCompleteSummarySchema(
+            total_symbols=result["total_symbols"],
+            successful_imports=result["successful_symbols"],
+            failed_imports=result["failed_symbols"],
+            total_balance_sheets=result["total_balance_sheets"],
+            total_income_statements=result["total_income_statements"],
+            total_cash_flows=result["total_cash_flows"],
+            total_ratios=result["total_ratios"],
+            processing_time=round(processing_time, 2),
+            results=[
+                ImportCompleteResultSchema(
+                    symbol=detail["symbol"],
+                    success=detail["success"],
+                    balance_sheets=detail["balance_sheets"],
+                    income_statements=detail["income_statements"],
+                    cash_flows=detail["cash_flows"],
+                    ratios=detail["ratios"],
+                    errors=detail["errors"]
+                ) for detail in result["details"]
+            ]
+        )
+    except Exception as e:
+        raise HttpError(500, f"Error importing all complete data: {str(e)}")
 
 
 @router.get("/cashflows/{symbol_id}", response=List[CashFlowOut])

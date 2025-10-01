@@ -193,6 +193,154 @@ class CalculateService:
 
         return result
 
+    def import_all_complete(self, force_update: bool = False) -> Dict[str, Any]:
+        """
+        Import ALL financial tables (balance sheet, income statement, cash flow, ratio)
+        for all symbols in database with detailed logging for each table.
+
+        Args:
+            force_update: If False (default), skip symbols that already have data.
+                         If True, re-import all symbols (to get latest data from vnstock).
+        """
+        symbols = Symbol.objects.all().order_by('name')
+
+        # Filter symbols based on force_update flag
+        if not force_update:
+            # Only import symbols that don't have complete data
+            symbols_to_import = []
+            for symbol in symbols:
+                has_balance = BalanceSheet.objects.filter(symbol=symbol).exists()
+                has_income = IncomeStatement.objects.filter(symbol=symbol).exists()
+                has_cashflow = CashFlow.objects.filter(symbol=symbol).exists()
+                has_ratio = Ratio.objects.filter(symbol=symbol).exists()
+
+                # Import if missing any table
+                if not (has_balance and has_income and has_cashflow and has_ratio):
+                    symbols_to_import.append(symbol)
+
+            symbols = symbols_to_import
+            mode_text = "RESUME MODE: Importing only incomplete symbols"
+        else:
+            mode_text = "FORCE UPDATE MODE: Re-importing all symbols"
+
+        total_symbols = len(symbols)
+
+        result = {
+            "total_symbols": total_symbols,
+            "successful_symbols": 0,
+            "failed_symbols": 0,
+            "skipped_symbols": 0,
+            "total_balance_sheets": 0,
+            "total_income_statements": 0,
+            "total_cash_flows": 0,
+            "total_ratios": 0,
+            "errors": [],
+            "details": []
+        }
+
+        logger.info(f"[IMPORT ALL COMPLETE] {mode_text} - {total_symbols} symbols")
+        print(f"\n{'='*60}")
+        print(f"{mode_text}")
+        print(f"Total symbols to process: {total_symbols}")
+        print(f"{'='*60}\n")
+
+        for idx, symbol in enumerate(symbols, 1):
+            symbol_detail = {
+                "symbol": symbol.name,
+                "success": False,
+                "balance_sheets": 0,
+                "income_statements": 0,
+                "cash_flows": 0,
+                "ratios": 0,
+                "errors": []
+            }
+
+            print(f"[{idx}/{total_symbols}] Processing: {symbol.name}")
+            logger.info(f"[IMPORT ALL COMPLETE] [{idx}/{total_symbols}] Processing symbol: {symbol.name}")
+
+            try:
+                # Fetch data from vnstock
+                fetch_success, bundle = self.vnstock_client.get_full_financial_data(symbol.name)
+
+                if not fetch_success or not bundle:
+                    error_msg = f"Failed to fetch data from vnstock"
+                    symbol_detail["errors"].append(error_msg)
+                    logger.error(f"[IMPORT ALL COMPLETE] {symbol.name} - {error_msg}")
+                    print(f"  ✗ FAILED: {error_msg}\n")
+                    result["failed_symbols"] += 1
+                else:
+                    # Import all tables in transaction
+                    with transaction.atomic():
+                        # 1. Import Balance Sheets
+                        print(f"  → Importing Balance Sheets...", end=" ")
+                        balance_count = self._import_balance_sheets(symbol, bundle)
+                        symbol_detail["balance_sheets"] = balance_count
+                        result["total_balance_sheets"] += balance_count
+                        print(f"✓ SUCCESS ({balance_count} records)")
+                        logger.info(f"[IMPORT ALL COMPLETE] {symbol.name} - Balance Sheets: {balance_count} records imported")
+
+                        # 2. Import Income Statements
+                        print(f"  → Importing Income Statements...", end=" ")
+                        income_count = self._import_income_statements(symbol, bundle)
+                        symbol_detail["income_statements"] = income_count
+                        result["total_income_statements"] += income_count
+                        print(f"✓ SUCCESS ({income_count} records)")
+                        logger.info(f"[IMPORT ALL COMPLETE] {symbol.name} - Income Statements: {income_count} records imported")
+
+                        # 3. Import Cash Flows
+                        print(f"  → Importing Cash Flows...", end=" ")
+                        cashflow_count = self._import_cash_flows(symbol, bundle)
+                        symbol_detail["cash_flows"] = cashflow_count
+                        result["total_cash_flows"] += cashflow_count
+                        print(f"✓ SUCCESS ({cashflow_count} records)")
+                        logger.info(f"[IMPORT ALL COMPLETE] {symbol.name} - Cash Flows: {cashflow_count} records imported")
+
+                        # 4. Import Ratios
+                        print(f"  → Importing Ratios...", end=" ")
+                        ratio_count = self._import_ratios(symbol, bundle)
+                        symbol_detail["ratios"] = ratio_count
+                        result["total_ratios"] += ratio_count
+                        print(f"✓ SUCCESS ({ratio_count} records)")
+                        logger.info(f"[IMPORT ALL COMPLETE] {symbol.name} - Ratios: {ratio_count} records imported")
+
+                        symbol_detail["success"] = True
+                        result["successful_symbols"] += 1
+
+                        print(f"  ✓ COMPLETED: All tables imported successfully\n")
+                        logger.info(f"[IMPORT ALL COMPLETE] {symbol.name} - All tables imported successfully")
+
+            except Exception as e:
+                error_msg = f"Import error: {str(e)}"
+                symbol_detail["errors"].append(error_msg)
+                result["failed_symbols"] += 1
+                logger.error(f"[IMPORT ALL COMPLETE] {symbol.name} - {error_msg}")
+                print(f"  ✗ FAILED: {error_msg}\n")
+
+            finally:
+                result["details"].append(symbol_detail)
+
+                # Sleep between symbols to avoid rate limiting
+                if self.sleep_between_symbols > 0 and idx < total_symbols:
+                    time.sleep(self.sleep_between_symbols)
+
+        # Final summary
+        print(f"\n{'='*60}")
+        print(f"IMPORT COMPLETE SUMMARY")
+        print(f"{'='*60}")
+        print(f"Mode:                 {'FORCE UPDATE' if force_update else 'RESUME'}")
+        print(f"Total Symbols:        {result['total_symbols']}")
+        print(f"Successful:           {result['successful_symbols']}")
+        print(f"Failed:               {result['failed_symbols']}")
+        print(f"Balance Sheets:       {result['total_balance_sheets']} records")
+        print(f"Income Statements:    {result['total_income_statements']} records")
+        print(f"Cash Flows:           {result['total_cash_flows']} records")
+        print(f"Ratios:               {result['total_ratios']} records")
+        print(f"{'='*60}\n")
+
+        logger.info(f"[IMPORT ALL COMPLETE] Finished: {result['successful_symbols']}/{result['total_symbols']} successful")
+
+        return result
+
     def _import_symbol_data(self, symbol) -> Dict[str, Any]:
         """Import financial data for a single symbol."""
         symbol_result = {
@@ -293,29 +441,19 @@ class CalculateService:
         """Import ratio data for a symbol."""
         count = 0
         ratio_df = bundle.get('ratios_df', pd.DataFrame())
-        
-        logger.info(f"[_import_ratios] {symbol.name} - ratios_df shape: {ratio_df.shape}")
-        
+
         if ratio_df.empty:
-            logger.warning(f"[_import_ratios] {symbol.name} - ratios_df is empty")
             return count
-            
+
         for _, row in ratio_df.iterrows():
             try:
-                row_dict = row.to_dict()
-                logger.debug(f"[_import_ratios] {symbol.name} - processing row: yearReport={row_dict.get('yearReport')}, lengthReport={row_dict.get('lengthReport')}")
-                
-                mapped_data = self._map_ratio_data(symbol, row_dict)
+                mapped_data = self._map_ratio_data(symbol, row.to_dict())
                 if mapped_data:
                     upsert_ratio(mapped_data)
                     count += 1
-                    logger.debug(f"[_import_ratios] {symbol.name} - successfully imported ratio")
-                else:
-                    logger.warning(f"[_import_ratios] {symbol.name} - mapped_data is None")
             except Exception as e:
                 logger.error(f"Error importing ratio for {symbol.name}: {str(e)}")
-        
-        logger.info(f"[_import_ratios] {symbol.name} - imported {count} ratios")
+
         return count
 
     def _map_balance_sheet_data(self, symbol, data) -> Dict[str, Any]:

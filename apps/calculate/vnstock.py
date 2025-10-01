@@ -77,43 +77,6 @@ class VNStock:
                 except Exception:
                     ratios_df = pd.DataFrame()
 
-                try:
-                    print(f"{symbol} balance_sheet: rows={len(bs_df)} cols={list(bs_df.columns)[:8]}")
-                    if not bs_df.empty:
-                        print(f"{symbol} balance_sheet sample: {bs_df.head(1).to_dict(orient='records')}")
-                except Exception:
-                    pass
-                try:
-                    print(f"{symbol} income_statement: rows={len(inc_df)} cols={list(inc_df.columns)[:8]}")
-                    if not inc_df.empty:
-                        print(f"{symbol} income_statement sample: {inc_df.head(1).to_dict(orient='records')}")
-                except Exception:
-                    pass
-                try:
-                    print(f"{symbol} cash_flow: rows={len(cf_df)} cols={list(cf_df.columns)[:8]}")
-                    if not cf_df.empty:
-                        print(f"{symbol} cash_flow sample: {cf_df.head(1).to_dict(orient='records')}")
-                except Exception:
-                    pass
-                try:
-                    print(f"{symbol} ratios: rows={len(ratios_df)} cols={list(ratios_df.columns)[:8]}")
-                    if ratios_df.empty:
-                        try:
-                            methods_fin = [n for n in dir(finance) if not n.startswith('_')]
-                            print(f"{symbol} Finance methods: {methods_fin}")
-                        except Exception:
-                            pass
-                        try:
-                            comp_dbg = Company(symbol=symbol, source="VCI")
-                            methods_comp = [n for n in dir(comp_dbg) if not n.startswith('_')]
-                            print(f"{symbol} Company methods: {methods_comp}")
-                        except Exception:
-                            pass
-                    else:
-                        print(f"{symbol} ratios sample: {ratios_df.head(1).to_dict(orient='records')}")
-                except Exception:
-                    pass
-
                 bundle = {
                     "balance_sheet_df": bs_df,
                     "income_statement_df": inc_df,

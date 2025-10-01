@@ -244,3 +244,34 @@ def fast_import_with_cache(request, exchange: str = "HSX"):
             "error": f"Fast import failed: {str(e)}",
             "partial_results": results
         }
+
+
+@router.post("/import/all-complete")
+def import_all_complete(request, exchange: str = "HSX", force_update: bool = False):
+    """
+    Import ALL stock data (symbols, companies, industries, shareholders, officers, events, sub_companies)
+    for all symbols with detailed logging for each table.
+
+    Query Parameters:
+    - exchange (str): Exchange to import (HSX, HNX, UPCOM). Default: HSX
+    - force_update (bool):
+        - False (default): Resume mode - only import symbols missing data
+        - True: Force update mode - re-import all symbols to get latest data
+    """
+    import time
+
+    try:
+        start_time = time.time()
+        service = VnstockImportService(per_symbol_sleep=0.5)
+        result = service.import_all_complete(exchange=exchange, force_update=force_update)
+        processing_time = time.time() - start_time
+        result["processing_time"] = round(processing_time, 2)
+
+        return result
+
+    except Exception as e:
+        return {
+            "error": f"Import all complete failed: {str(e)}",
+            "exchange": exchange,
+            "force_update": force_update
+        }
