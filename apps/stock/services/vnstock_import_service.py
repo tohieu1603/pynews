@@ -266,7 +266,6 @@ class VnstockImportService:
         """Lấy tất cả symbols từ vnstock với cache"""
         print(f"Fetching all symbols from vnstock for {exchange}...")
 
-        # Sử dụng cache service để tăng tốc
         symbols_df = self.cache_service.fetch_symbols_with_cache(exchange)
 
         if symbols_df is not None and not symbols_df.empty:
@@ -279,14 +278,12 @@ class VnstockImportService:
         """Filter symbols theo exchange"""
         print(f"Filtering for exchange: {exchange}")
         
-        # Thử các cách filter khác nhau
         for col_name in ['exchange', 'Exchange', 'EXCHANGE']:
             if col_name in all_symbols_df.columns:
                 filtered_df = all_symbols_df[all_symbols_df[col_name].str.upper() == exchange.upper()]
                 print(f"Filtered by {col_name}: {len(filtered_df)} symbols")
                 return filtered_df
         
-        # Nếu không có cột exchange và là HSX, filter theo độ dài symbol
         if exchange.upper() == "HSX" and 'symbol' in all_symbols_df.columns:
             filtered_df = all_symbols_df[all_symbols_df['symbol'].str.len() <= 4]
             print(f"Filtered HSX by symbol length: {len(filtered_df)} symbols")
@@ -309,7 +306,6 @@ class VnstockImportService:
             total_imported += len(batch_results)
             print(f"Batch {i//batch_size + 1}: Imported {len(batch_results)} symbols (Total: {total_imported})")
             
-            # Sleep ngắn giữa các batch
             if self.per_symbol_sleep > 0:
                 time.sleep(self.per_symbol_sleep * 5)
         
@@ -362,7 +358,6 @@ class VnstockImportService:
             
             print(f"Found {symbols_queryset.count()} symbols in database")
             
-            # Import companies theo từng symbol
             total_processed = 0
             companies_created = 0
             
@@ -376,10 +371,8 @@ class VnstockImportService:
                         print(f"No company info found for symbol: {symbol.name}")
                         continue
                     
-                    # Upsert company vào DB
                     company = self._upsert_company_from_info(company_info)
                     
-                    # Cập nhật company_id cho symbol
                     symbol.company = company
                     symbol.save()
                     
@@ -411,7 +404,6 @@ class VnstockImportService:
     def _fetch_company_info_from_vnstock(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Lấy thông tin company từ vnstock theo symbol sử dụng bundle approach với cache"""
         try:
-            # Sử dụng cache service để tăng tốc
             bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol)
             
             if not ok or not bundle:
@@ -476,10 +468,8 @@ class VnstockImportService:
         """Upsert company vào database"""
         company_name = company_info.get('company_name')
         
-        # Tạo defaults dict (loại bỏ company_name)
         defaults = {k: v for k, v in company_info.items() if k != 'company_name'}
         
-        # Upsert company
         company = repo.upsert_company(company_name, defaults)
         return company
     
@@ -498,10 +488,8 @@ class VnstockImportService:
             try:
                 print(f"Processing company for symbol: {symbol.name}")
                 
-                # Khởi tạo vnstock Company
                 company_client = Company(symbol=symbol.name, source="TCBS")
                 
-                # Lấy company profile với safe API call
                 def get_profile(client=company_client):
                     return client.profile()
                 
@@ -511,11 +499,9 @@ class VnstockImportService:
                     print(f"No company profile found for {symbol.name}")
                     continue
                 
-                # Lấy dữ liệu đầu tiên
                 company_data = profile_data.iloc[0]
                 
                 with transaction.atomic():
-                    # Tạo hoặc update company
                     company_name = safe_str(company_data.get('companyName') or company_data.get('company_name'))
                     if not company_name:
                         company_name = symbol.name + " Company"
@@ -535,7 +521,6 @@ class VnstockImportService:
                         }
                     )
                     
-                    # Cập nhật company_id vào symbol
                     symbol.company = company_obj
                     symbol.save()
                     
@@ -547,11 +532,10 @@ class VnstockImportService:
                     results.append(result)
                     print(f"Updated company for symbol: {symbol.name}")
                 
-                # Add sleep to avoid rate limit
                 if self.per_symbol_sleep > 0:
                     time.sleep(self.per_symbol_sleep)
                 else:
-                    time.sleep(1.0)  # Default 1 second sleep to be safe
+                    time.sleep(1.0) 
                 
             except Exception as e:
                 print(f"Error importing company for {symbol.name}: {e}")
@@ -571,7 +555,6 @@ class VnstockImportService:
         results = []
         
         try:
-            # Bước 1: Lấy data từ vnstock với cache
             print("Fetching industries and symbols mapping from vnstock...")
 
             industries_icb_df, symbols_by_industries_df = self.cache_service.fetch_industries_with_cache()
@@ -586,7 +569,6 @@ class VnstockImportService:
             
             print(f"Found {len(industries_icb_df)} industries and {len(symbols_by_industries_df)} symbol mappings")
             
-            # Bước 2: Import tất cả industries vào DB
             print("Importing industries to database...")
             industries_imported = 0
             for _, row in industries_icb_df.iterrows():
@@ -609,14 +591,12 @@ class VnstockImportService:
             
             print(f"Imported {industries_imported} industries")
             
-            # Bước 3: Tạo quan hệ Symbol-Industry
             print("Creating Symbol-Industry relationships...")
             symbols = Symbol.objects.all()
             relationships_created = 0
             
             for symbol in symbols:
                 try:
-                    # Filter mapping rows cho symbol này
                     symbol_name = symbol.name.upper()
                     try:
                         sym_rows = symbols_by_industries_df[
@@ -632,7 +612,6 @@ class VnstockImportService:
                     
                     first_row = sym_rows.iloc[0]
                     
-                    # Lấy các icb_code từ icb_code1, icb_code2, icb_code3, icb_code4
                     icb_codes = []
                     for col in ("icb_code1", "icb_code2", "icb_code3", "icb_code4"):
                         val = first_row.get(col)
@@ -645,10 +624,8 @@ class VnstockImportService:
                     if not icb_codes:
                         continue
                     
-                    # Map các icb_code thành Industry objects và tạo quan hệ
                     for code in icb_codes:
                         try:
-                            # Tìm industry theo icb_code
                             code_series = industries_icb_df["icb_code"].astype(str).str.strip()
                             match = industries_icb_df[code_series == code]
                             
@@ -660,7 +637,6 @@ class VnstockImportService:
                                     'level': safe_int(industry_row.get('level'))
                                 })
                                 
-                                # Tạo quan hệ N-N
                                 repo.upsert_symbol_industry(symbol, industry)
                                 relationships_created += 1
                                 
@@ -700,9 +676,8 @@ class VnstockImportService:
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
         
-        # Sử dụng cache service để tăng tốc
         processed = 0
-        batch_size = 20  # Increased batch size 
+        batch_size = 20 
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -723,7 +698,6 @@ class VnstockImportService:
                         print(f"No shareholders data for {symbol.name}")
                         continue
                     
-                    # Map shareholders data
                     shareholder_rows = []
                     for _, row in shareholders_df.iterrows():
                         shareholder_row = {
@@ -735,7 +709,6 @@ class VnstockImportService:
                         shareholder_rows.append(shareholder_row)
                     
                     if shareholder_rows:
-                        # Bulk upsert
                         repo.upsert_shareholders(symbol.company, shareholder_rows)
                         
                         results.append({
@@ -748,19 +721,16 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Apply rate limiting and sleep
                     self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
+                        time.sleep(0.5)  
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
                     continue
             
-            # No sleep - maximum speed
-        
         print(f"Shareholders import completed! Processed {processed}/{total_symbols} symbols, {len(results)} successful")
         return results
     
@@ -775,9 +745,8 @@ class VnstockImportService:
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
 
-        # Sử dụng cache service để tăng tốc
         processed = 0
-        batch_size = 20  # Increased batch size
+        batch_size = 20 
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -785,7 +754,6 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với officers từ cache
                     bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
@@ -794,7 +762,6 @@ class VnstockImportService:
                     if officers_df is None or officers_df.empty:
                         continue
                     
-                    # Map officers data
                     officer_rows = []
                     for _, row in officers_df.iterrows():
                         officer_row = {
@@ -806,7 +773,6 @@ class VnstockImportService:
                         officer_rows.append(officer_row)
                     
                     if officer_rows:
-                        # Bulk upsert
                         repo.upsert_officers(symbol.company, officer_rows)
                         
                         results.append({
@@ -819,18 +785,16 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Apply rate limiting and sleep
                     self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
+                        time.sleep(0.5)  
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
                     continue
             
-            # No sleep - maximum speed
         
         print(f"Officers import completed! Processed {processed}/{total_symbols} symbols, {len(results)} successful")
         return results
@@ -846,7 +810,6 @@ class VnstockImportService:
         total_symbols = symbols.count()
         print(f"Processing {total_symbols} symbols with companies...")
 
-        # Sử dụng cache service để tăng tốc
         processed = 0
         batch_size = 20  # Increased batch size
         
@@ -856,7 +819,6 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với events từ cache
                     bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
@@ -865,7 +827,6 @@ class VnstockImportService:
                     if events_df is None or events_df.empty:
                         continue
                     
-                    # Map events data
                     event_rows = []
                     for _, row in events_df.iterrows():
                         event_row = {
@@ -877,7 +838,6 @@ class VnstockImportService:
                         event_rows.append(event_row)
                     
                     if event_rows:
-                        # Bulk upsert
                         repo.upsert_events(symbol.company, event_rows)
                         
                         results.append({
@@ -890,19 +850,16 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Apply rate limiting and sleep
                     self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
+                        time.sleep(0.5)
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
                     continue
             
-            # No sleep - maximum speed
-        
         print(f"Events import completed! Processed {processed}/{total_symbols} symbols, {len(results)} successful")
         return results
 
@@ -913,7 +870,6 @@ class VnstockImportService:
         print("Starting import sub companies for all symbols (cache approach)...")
         results = []
 
-        # Bước 1: Lấy tất cả symbols có company
         symbols = Symbol.objects.filter(company__isnull=False).select_related('company')
         total_symbols = symbols.count()
 
@@ -923,9 +879,8 @@ class VnstockImportService:
 
         print(f"Found {total_symbols} symbols with companies")
 
-        # Bước 2: Sử dụng cache service để lấy subsidiaries data
         processed = 0
-        batch_size = 25  # Larger batch for sub companies
+        batch_size = 25  
         
         for i in range(0, total_symbols, batch_size):
             batch_symbols = symbols[i:i+batch_size]
@@ -933,7 +888,6 @@ class VnstockImportService:
             
             for symbol in batch_symbols:
                 try:
-                    # Lấy bundle data với subsidiaries từ cache
                     bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
                     if not bundle:
                         continue
@@ -942,7 +896,6 @@ class VnstockImportService:
                     if subsidiaries_df is None or subsidiaries_df.empty:
                         continue
                     
-                    # Map subsidiaries data
                     sub_company_rows = []
                     for _, row in subsidiaries_df.iterrows():
                         sub_company_row = {
@@ -952,7 +905,6 @@ class VnstockImportService:
                         sub_company_rows.append(sub_company_row)
                     
                     if sub_company_rows:
-                        # Bulk upsert sub companies
                         repo.upsert_sub_company(sub_company_rows, symbol.company)
                         
                         results.append({
@@ -965,23 +917,19 @@ class VnstockImportService:
                     
                     processed += 1
                     
-                    # Apply rate limiting and sleep
                     self.rate_limiter.wait_if_needed(f"processing_{symbol.name}")
                     if self.per_symbol_sleep > 0:
                         time.sleep(self.per_symbol_sleep)
                     else:
-                        time.sleep(0.5)  # Increased default sleep to avoid rate limit
+                        time.sleep(0.5) 
                     
                 except Exception as e:
                     print(f"✗ Error with {symbol.name}: {e}")
                     continue
             
-            # No sleep - maximum speed
-        
         print(f"Sub companies import completed! Processed {processed}/{total_symbols} symbols, {len(results)} successful")
         return results
 
-    # Helper methods for import_all_complete
     def _import_shareholders_for_symbol(self, symbol: Symbol) -> Dict[str, Any]:
         """Import shareholders for a single symbol"""
         result = {"symbol": symbol.name, "count": 0, "errors": []}

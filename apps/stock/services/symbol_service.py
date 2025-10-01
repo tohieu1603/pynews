@@ -22,6 +22,8 @@ from apps.stock.utils.safe import (
     to_datetime,
     to_epoch_seconds,
 )
+from django.utils import timezone
+from datetime import timedelta
 from apps.stock.schemas import SymbolList, SymbolOutBasic
 
 class SymbolService:
@@ -260,7 +262,7 @@ class SymbolService:
                     ),
                     "update_date": to_datetime(sh.update_date),
                 }
-                for sh in c.shareholders.all()[:5]
+                for sh in c.shareholders.all().order_by('-share_own_percent')[:7]   
             ]
 
             news_list = [
@@ -285,9 +287,12 @@ class SymbolService:
                     "issue_date": to_datetime(e.issue_date),
                     "source_url": e.source_url,
                 }
-                for e in c.events.all()[:5]
+                for e in c.events.all().order_by('-public_date')[:6]
             ]
 
+            three_years_ago = timezone.now() - timedelta(days=3*365)
+
+            
             officers_list = [
                 {
                     "id": o.id,
@@ -301,7 +306,8 @@ class SymbolService:
                     ),
                     "updated_at": to_datetime(o.updated_at),
                 }
-                for o in c.officers.all()[:5]
+                 for o in c.officers.filter(updated_at__gte=three_years_ago)
+                       .order_by('-updated_at')
             ]
             subsidiaries_list = [
                 {
