@@ -19,17 +19,15 @@ User = get_user_model()
 
 router = Router(tags=["auth"])
 
-# --- Constants -----------------------------------------------------------------
 
 AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
 TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo"
 DEFAULT_SCOPES = "openid email profile"
-HTTP_TIMEOUT = 10  # seconds
+HTTP_TIMEOUT = 10 
 
 
-# --- Exceptions ----------------------------------------------------------------
 
 class GoogleOAuthError(Exception):
     """Base exception for Google OAuth flow."""
@@ -43,7 +41,6 @@ class GoogleIdTokenError(GoogleOAuthError):
     """Raised when verifying Google ID token fails."""
 
 
-# --- Dataclasses ----------------------------------------------------------------
 
 @dataclass
 class GoogleOAuthConfig:
@@ -83,8 +80,6 @@ class GoogleProfile:
             picture=data.get("picture"),
         )
 
-
-# --- Helper utilities ----------------------------------------------------------
 
 def _require_setting(name: str) -> str:
     value = getattr(settings, name, None)
@@ -231,8 +226,6 @@ class GoogleAuthUrlResponse(BaseModel):
 class MessageResponse(BaseModel):
     message: str
 
-
-# --- Google OAuth Service -------------------------------------------------------
 
 class GoogleOAuthService:
     def __init__(self, config: GoogleOAuthConfig):

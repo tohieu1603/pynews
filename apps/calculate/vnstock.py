@@ -2,6 +2,7 @@
 from typing import Optional, Generator, Tuple, Dict
 from vnstock import Listing, Finance, Company
 import pandas as pd
+from core.db_utils import close_db_connections
 
 
 class VNStock:
@@ -15,13 +16,17 @@ class VNStock:
             return pd.DataFrame()
         return df
     def inter_all_symbols(self, exchange: Optional[str] = "HSX") -> Generator[Tuple[str, str], None, None]:
-        listing = Listing()
-        df = listing.symbols_by_exchange()
-        exch = (exchange or "HSX").upper()
-        df = df[df["exchange"] == exch]
-        
-        for _, row in df.iterrows():
-            yield str(row.get("symbol")), str(row.get("exchange"))
+        listing = None
+        try:
+            listing = Listing()
+            df = listing.symbols_by_exchange()
+            exch = (exchange or "HSX").upper()
+            df = df[df["exchange"] == exch]
+
+            for _, row in df.iterrows():
+                yield str(row.get("symbol")), str(row.get("exchange"))
+        finally:
+            close_db_connections(listing)
     
     def fetch_bundle(
         self, symbol: str

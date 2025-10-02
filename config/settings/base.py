@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "apps.setting",
     "apps.seapay",
     "apps.logs.apps.LogsConfig",
+    "apps.notification.apps.NotificationConfig",
     "core",
 ]
 
@@ -91,7 +92,16 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT"),
+        # Persistent connections - giữ connection trong 60s
         'CONN_MAX_AGE': 60,
+        # Health checks - tự động kiểm tra và đóng connections lỗi
+        'CONN_HEALTH_CHECKS': True,
+        # Connection pool settings
+        'OPTIONS': {
+            # Limit số connections per process
+            'connect_timeout': 10,
+            'options': '-c statement_timeout=30000',  # 30s timeout cho queries
+        },
     }
 }
 
@@ -192,3 +202,17 @@ CACHES = {
         }
     }
 }
+
+# =========================
+# EMAIL SETTINGS
+# =========================
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend'  # Print to console by default
+)
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@pynews.com')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = _env_bool('EMAIL_USE_TLS', 'True')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')

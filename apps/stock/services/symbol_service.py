@@ -16,8 +16,6 @@ from apps.stock.services.payload_builder import PayloadBuilder
 from apps.stock.services.fetch_service import FetchService
 from apps.stock.services.cache_service import VNStockCacheService
 from apps.stock.utils.safe import (
-    safe_decimal,
-    safe_int,
     safe_str,
     to_datetime,
     to_epoch_seconds,
@@ -25,6 +23,8 @@ from apps.stock.utils.safe import (
 from django.utils import timezone
 from datetime import timedelta
 from apps.stock.schemas import SymbolList, SymbolOutBasic
+from core.db_utils import ensure_django_connection_closed
+from django.db import reset_queries
 
 class SymbolService:
     def __init__(
@@ -71,6 +71,8 @@ class SymbolService:
 
     def _build_officer_rows(self, df: pd.DataFrame) -> List[Dict]:
         return DataMappers.map_officers(df)
+    
+    
     def import_all_symbols(self) -> List[Dict[str, Any]]:
         """
         Import toàn bộ symbols đơn giản, không dùng batch, rate limit hay bulk.
@@ -104,8 +106,7 @@ class SymbolService:
             print(f"Error during symbol seeding/check: {e}")
             db_symbols = list(repo.qs_all_symbols())
 
-        # Process symbols from DB
-        for sym in db_symbols:
+        for idx, sym in enumerate(db_symbols):
             symbol_name = sym.name
             exchange = getattr(sym, 'exchange', None)
             try:
@@ -113,17 +114,16 @@ class SymbolService:
                 if not ok or not bundle:
                     print(f"Skip {symbol_name} ({exchange}): no bundle")
                     continue
-                
-                # Get overview data
+
                 overview_df = bundle.get("overview_df_TCBS")
                 if overview_df is None or overview_df.empty:
                     overview_df = bundle.get("overview_df_VCI")
                 if overview_df is None or overview_df.empty:
                     print(f"Skip {symbol_name} ({exchange}): empty overview_df")
                     continue
-                
+
                 data = overview_df.iloc[0]
-                
+
                 with transaction.atomic():
                     symbol = repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})
 
@@ -156,17 +156,22 @@ class SymbolService:
                     except Exception as e:
                         print(f"Error building payload for {symbol_name}: {e}")
                         continue
-                
+
+                ensure_django_connection_closed()
+                reset_queries()
+
                 if self.per_symbol_sleep > 0:
                     time.sleep(self.per_symbol_sleep)
-                    
+
             except Exception as e:
                 print(f"Error processing {symbol_name}: {e}")
+                ensure_django_connection_closed()
+                reset_queries()
                 continue
         
         print(f"Import completed! {len(results)} symbols processed")
         return results
-
+    
     def list_symbols_payload(self) -> List[Dict[str, Any]]:
         """List all symbols with industries and minimal company info."""
         symbols = repo.qs_symbols_with_industries()
@@ -198,6 +203,7 @@ class SymbolService:
                 }
             )
         return data
+    
     def get_symbols(self, limit: int = 10) -> List[SymbolList]:
         
         symbols = repo.qs_symbols(limit=limit)
@@ -210,6 +216,7 @@ class SymbolService:
             )
             for s in symbols
         ]
+    
     def get_symbol_payload(self, symbol: int) -> Dict[str, Any]:
         sym: Symbol = get_object_or_404(repo.qs_symbol_by_name(symbol))
         c = sym.company

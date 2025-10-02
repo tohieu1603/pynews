@@ -11,21 +11,17 @@ from apps.stock.services.cache_service import VNStockCacheService
 from apps.stock.services.rate_limiter import get_rate_limiter
 from apps.stock.utils.pandas_compat import suppress_pandas_warnings
 
-# Suppress pandas warnings
 suppress_pandas_warnings()
 
 
 class VnstockImportService:
     """Service chuyên dụng để import dữ liệu từ vnstock vào database"""
 
-    def __init__(self, per_symbol_sleep: float = 0.5):  # Tăng sleep time để tránh rate limit
+    def __init__(self, per_symbol_sleep: float = 0.5): 
         self.per_symbol_sleep = per_symbol_sleep
         self.listing = Listing()
-        # Initialize cache service for better performance
         self.cache_service = VNStockCacheService()
-        # Initialize rate limiter
         self.rate_limiter = get_rate_limiter()
-        # Company client sẽ được khởi tạo khi cần với từng symbol
 
     def import_all_complete(self, exchange: str = "HSX", force_update: bool = False) -> Dict[str, Any]:
         """
@@ -69,10 +65,8 @@ class VnstockImportService:
             result["total_symbols"] = len(symbols_result)
             print(f"✓ SUCCESS ({len(symbols_result)} symbols)")
 
-            # Get all symbols for processing
             symbols = Symbol.objects.all().order_by('name')
 
-            # Filter symbols if not force_update
             if not force_update:
                 symbols_to_process = []
                 for symbol in symbols:
@@ -198,15 +192,14 @@ class VnstockImportService:
         error_msg = str(error)
         print(f"Rate limit error for {symbol_name or 'unknown'}: {error_msg}")
         
-        # Extract wait time from error message
         if "36 giây" in error_msg or "36s" in error_msg:
-            wait_time = 40  # Wait a bit longer than required
+            wait_time = 40  
         elif "30 giây" in error_msg or "30s" in error_msg:
             wait_time = 35
         elif "60 giây" in error_msg or "60s" in error_msg:
             wait_time = 65
         else:
-            wait_time = 60  # Default wait
+            wait_time = 60  
             
         print(f"Waiting {wait_time} seconds before retry...")
         time.sleep(wait_time)
@@ -217,11 +210,11 @@ class VnstockImportService:
         for attempt in range(max_retries):
             try:
                 result = api_func()
-                return result  # Chỉ trả về result, không trả về tuple
+                return result 
             except Exception as e:
                 error_msg = str(e)
                 if "rate limit" in error_msg.lower() or "quá nhiều request" in error_msg:
-                    if attempt < max_retries - 1:  # Not the last attempt
+                    if attempt < max_retries - 1:
                         wait_time = self._handle_rate_limit_error(e, symbol_name)
                         print(f"Retrying API call for {symbol_name} (attempt {attempt + 2}/{max_retries})")
                         continue
@@ -241,19 +234,16 @@ class VnstockImportService:
         results = []
         
         try:
-            # Bước 1: Lấy tất cả symbols từ vnstock 1 lần duy nhất với cache
             all_symbols_df = self._fetch_all_symbols_from_vnstock(exchange)
             if all_symbols_df is None or all_symbols_df.empty:
                 print("Failed to fetch symbols from vnstock")
                 return results
             
-            # Bước 2: Filter theo exchange
             symbols_df = self._filter_symbols_by_exchange(all_symbols_df, exchange)
             if symbols_df.empty:
                 print(f"No symbols found for exchange {exchange}")
                 return results
             
-            # Bước 3: Bulk import
             results = self._bulk_import_symbols(symbols_df, exchange)
             print(f"Import completed! {len(results)} symbols imported successfully")
             return results

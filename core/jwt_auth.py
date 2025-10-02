@@ -12,7 +12,7 @@ User = get_user_model()
 class JWTAuth(HttpBearer):
     """Authenticate requests using a bearer JWT token."""
 
-    def authenticate(self, request, token: str):  # type: ignore[override]
+    def authenticate(self, request, token: str):  
         try:
             payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         except Exception:

@@ -195,7 +195,7 @@ def reset_rate_limit_stats(request):
 @router.post("/import/fast")
 def fast_import_with_cache(request, exchange: str = "HSX"):
     """Import nhanh sử dụng cache service và rate limiting"""
-    service = VnstockImportService(per_symbol_sleep=0.5)  # Increased sleep time
+    service = VnstockImportService(per_symbol_sleep=0.5)  
 
     results = {
         "symbols": [],
@@ -208,17 +208,13 @@ def fast_import_with_cache(request, exchange: str = "HSX"):
     }
 
     try:
-        # Import symbols
         print("=== Starting fast import with cache ===")
         results["symbols"] = service.import_all_symbols_from_vnstock(exchange)
 
-        # Import companies
         results["companies"] = service.import_companies_from_vnstock(exchange)
 
-        # Import industries
         results["industries"] = service.import_industries_for_symbols()
 
-        # Import related data with cache
         results["shareholders"] = service.import_shareholders_for_all_symbols()
         results["officers"] = service.import_officers_for_all_symbols()
         results["events"] = service.import_events_for_all_symbols()

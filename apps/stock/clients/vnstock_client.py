@@ -7,6 +7,7 @@ from vnstock import Listing
 from vnstock.explorer.vci.company import Company as VCIExplorerCompany
 from apps.stock.services.rate_limiter import get_rate_limiter
 from apps.stock.utils.pandas_compat import suppress_pandas_warnings
+from core.db_utils import close_db_connections
 
 # Suppress pandas warnings
 suppress_pandas_warnings()
@@ -116,6 +117,10 @@ class VNStockClient:
         """
         retries = 0
         while retries <= self.max_retries:
+            vn_company_tcbs = None
+            vn_company_vci = None
+            listing = None
+
             try:
                 # Apply rate limiting
                 self.rate_limiter.wait_if_needed(f"company_bundle_{symbol}")
@@ -124,7 +129,7 @@ class VNStockClient:
                 vn_company_vci = VNCompany(symbol=symbol, source="VCI")
                 listing = Listing()
 
-                return {
+                bundle = {
                     "overview_df_TCBS": self._df_or_empty(vn_company_tcbs.overview()),
                     "overview_df_VCI": self._df_or_empty(vn_company_vci.overview()),
                     "profile_df": self._df_or_empty(vn_company_tcbs.profile()),
@@ -135,11 +140,12 @@ class VNStockClient:
                     "officers_df": self._df_or_empty(vn_company_vci.officers()),
                     "events_df": self._df_or_empty(vn_company_vci.events()),
                     "subsidiaries": self._df_or_empty(vn_company_tcbs.subsidiaries()),
-                }, True
+                }
+
+                return bundle, True
 
             except SystemExit:
                 retries += 1
-                # Tăng thời gian wait với exponential backoff
                 wait_time = self.wait_seconds * (2 ** (retries - 1))
                 print(
                     f"⚠️ Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {wait_time}s..."
@@ -149,6 +155,11 @@ class VNStockClient:
             except Exception as e:
                 print(f"Error {symbol}: {e}")
                 return {}, False
+
+            finally:
+                # Close DB connections
+                close_db_connections(vn_company_tcbs, vn_company_vci, listing)
+
         return {}, False
 
 
@@ -162,6 +173,10 @@ class VNStockClient:
         """
         retries = 0
         while retries <= self.max_retries:
+            listing = None
+            vn_company_tcbs = None
+            vn_company_vci = None
+
             try:
                 # Apply rate limiting
                 self.rate_limiter.wait_if_needed(f"company_bundle_safe_{symbol}")
@@ -231,15 +246,19 @@ class VNStockClient:
 
             except SystemExit:
                 retries += 1
-                # Tăng thời gian wait với exponential backoff
                 wait_time = self.wait_seconds * (2 ** (retries - 1))
                 print(
                     f"⚠️ Rate limit hit for {symbol}. Retry {retries}/{self.max_retries} after {wait_time}s..."
                 )
                 time.sleep(wait_time)
+
             except Exception as e:
                 print(f"Error {symbol}: {e}")
                 return {}, False
+
+            finally:
+                # Close DB connections
+                close_db_connections(vn_company_tcbs, vn_company_vci, listing)
 
         return {}, False
 
