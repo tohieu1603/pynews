@@ -12,14 +12,13 @@ from django.utils import timezone
 class DatabaseLogHandler(logging.Handler):
     """Logging handler that persists records to the `logs` table."""
 
-    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - side-effect only
+    def emit(self, record: logging.LogRecord) -> None: 
         def _emit_sync():
             try:
                 context: Dict[str, Any] = getattr(record, "context", {}) or {}
                 extra_data: Dict[str, Any] = getattr(record, "extra_data", {}) or {}
                 environment: str | None = getattr(record, "environment", None) or getattr(settings, "APP_ENV", "local")
 
-                # Sử dụng raw SQL để tránh async issues
                 with connection.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO logs (level, channel, message, context, extra, environment, created_at)
@@ -34,12 +33,10 @@ class DatabaseLogHandler(logging.Handler):
                         timezone.now()
                     ])
             except DatabaseError:
-                # Table không sẵn sàng, bỏ qua để tránh crash dev server
                 return
-            except Exception:  # pragma: no cover - never raise from logging
+            except Exception: 
                 self.handleError(record)
         
-        # Chạy trong thread để tránh async context issues
         thread = threading.Thread(target=_emit_sync)
         thread.daemon = True
         thread.start()

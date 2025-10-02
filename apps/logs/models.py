@@ -33,14 +33,11 @@ class LogEntry(models.Model):
         db_table = "logs"
         db_table_comment = "System logs for auditing and debugging"
         indexes = [
-            # DESC index for efficient latest-first queries
             models.Index(fields=["-created_at"], name="idx_logs_created_at"),
             models.Index(fields=["level"], name="idx_logs_level"),
             models.Index(fields=["channel"], name="idx_logs_channel"),
-            # GIN index for full JSONB searching
             GinIndex(fields=["context"], name="idx_logs_context_gin"),
         ]
-        # Thêm ordering mặc định
         ordering = ["-created_at"]
 
     def __str__(self) -> str:

@@ -1,7 +1,9 @@
 import logging
+import re
 import time
 from typing import Any, Dict
 
+import jwt
 from django.conf import settings
 from django.utils.deprecation import MiddlewareMixin
 
@@ -15,6 +17,52 @@ def _client_ip(request) -> str | None:
     return request.META.get("REMOTE_ADDR")
 
 
+def _get_user_id_from_jwt(request) -> int | None:
+    """Extract user_id from JWT token in Authorization header or cookie."""
+    auth_header = request.META.get("HTTP_AUTHORIZATION")
+    token = None
+
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    else:
+        token = request.COOKIES.get("access_token")
+
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        return payload.get("user_id") or payload.get("sub")
+    except Exception:
+        return None
+
+
+def _get_stock_search_message(request) -> str | None:
+    """Generate custom log message for stock search endpoints."""
+    path = request.path
+
+    # Pattern: /api/stocks/symbols/{id}
+    symbol_by_id = re.match(r'^/api/stocks/symbols/(\d+)$', path)
+    if symbol_by_id:
+        symbol_id = symbol_by_id.group(1)
+        try:
+            from apps.stock.models import Symbol
+            symbol = Symbol.objects.filter(id=symbol_id).first()
+            if symbol:
+                return f"Tìm kiếm {symbol.name}, xem chi tiết mã {symbol_id}"
+        except Exception:
+            pass
+        return f"Tìm kiếm mã {symbol_id}"
+
+    # Pattern: /api/stocks/symbols/by-name/{name}
+    symbol_by_name = re.match(r'^/api/stocks/symbols/by-name/([^/]+)$', path)
+    if symbol_by_name:
+        symbol_name = symbol_by_name.group(1)
+        return f"Tìm kiếm {symbol_name}"
+
+    return None
+
+
 class RequestLoggingMiddleware(MiddlewareMixin):
     """Capture incoming/outgoing HTTP requests for audit logging."""
 
@@ -25,10 +73,15 @@ class RequestLoggingMiddleware(MiddlewareMixin):
             "method": request.method,
             "ip": _client_ip(request),
             "query_string": request.META.get("QUERY_STRING", ""),
-            "user_id": getattr(request.user, "id", None) if hasattr(request, "user") and request.user.is_authenticated else None,
+            "user_id": _get_user_id_from_jwt(request),
         }
+
+        # Check for stock search endpoints and generate custom message
+        custom_message = _get_stock_search_message(request)
+        log_message = custom_message if custom_message else f"Client request {request.path}"
+
         logger.info(
-            "request_started",
+            log_message,
             extra={
                 "context": request._log_context,
                 "channel": "web",
@@ -49,8 +102,13 @@ class RequestLoggingMiddleware(MiddlewareMixin):
                     "content_type": response.get("Content-Type"),
                 }
             )
+
+            # Check for stock search endpoints and generate custom message
+            custom_message = _get_stock_search_message(request)
+            log_message = custom_message if custom_message else f"Client request {request.path}"
+
             logger.info(
-                "request_finished",
+                log_message,
                 extra={
                     "context": context,
                     "channel": "web",
@@ -59,7 +117,7 @@ class RequestLoggingMiddleware(MiddlewareMixin):
             )
         return response
 
-    def process_exception(self, request, exception):  # pragma: no cover - best effort logging
+    def process_exception(self, request, exception):  
         context = getattr(request, "_log_context", {}).copy()
         context.update({"exception": repr(exception)})
         logger.error(
