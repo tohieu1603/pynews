@@ -17,13 +17,10 @@ def env_list(key: str, default: str = "") -> list[str]:
     return [x.strip() for x in str(raw).split(",") if x and x.strip()]
 
 
-# Core security and debug settings
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-secret-key")
 
-# Default True for local dev; override via .env
 DEBUG = _env_bool("DEBUG", "True")
 
-# Comma-separated hosts in .env, e.g. "localhost,127.0.0.1"
 ALLOWED_HOSTS = env_list(
     "ALLOWED_HOSTS",
     "localhost,127.0.0.1,0.0.0.0,[::1]",

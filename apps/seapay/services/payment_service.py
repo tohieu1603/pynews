@@ -32,7 +32,6 @@ class PaymentService:
         http_client=requests,
     ) -> None:
         self.repository = repository or PaymentRepository()
-        # Keep a reference for easy mocking in tests.
         self._http_client = http_client
 
     def create_payment_intent(

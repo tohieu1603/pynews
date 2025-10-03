@@ -140,7 +140,6 @@ class NotificationDelivery(models.Model):
     def __str__(self):
         return f"{self.channel} - {self.status} ({self.delivery_id})"
 
-
 class WebhookSource(models.TextChoices):
     """Nguồn webhook"""
     TRADINGVIEW = 'tradingview', 'TradingView'

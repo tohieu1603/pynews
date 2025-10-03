@@ -58,7 +58,6 @@ class PaymentRepository:
             metadata=metadata or {}
         )
         
-        # Generate QR code URL
         intent.qr_code_url = (
             f"https://qr.sepay.vn/img?acc=96247CISI1"
             f"&bank=BIDV"
@@ -67,7 +66,6 @@ class PaymentRepository:
             f"&template=compact"
         )
         
-        # Generate deep link
         intent.deep_link = (
             f"https://sepay.vn/payment?acc=96247CISI1"
             f"&bank=BIDV"

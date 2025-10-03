@@ -22,7 +22,6 @@ class SepayClient:
         Tạo QR code VietQR qua SePay
         """
         if not self.api_key:
-            # Fallback cho development - return mock data
             return self._get_mock_qr_data(amount, content, bank_code)
         
         url = f"{self.base_url}/api/v1/qr"

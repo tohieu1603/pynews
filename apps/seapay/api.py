@@ -117,7 +117,7 @@ def sepay_callback(request: HttpRequest):
                 reference_code=payload.get("referenceCode", ""),
             )
         return PaymentCallbackResponse(**result)
-    except Exception as exc:  # pragma: no cover - defensive fallback
+    except Exception as exc: 
         logger.exception("Callback processing failed: %s", exc)
         return PaymentCallbackResponse(message=f"Callback processing failed: {exc}")
 
@@ -234,7 +234,7 @@ def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
         attempt = topup_service.create_payment_attempt(intent=intent, bank_code=data.bank_code)
     except ValueError as exc:
         raise HttpError(400, str(exc))
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc: 
         raise HttpError(500, f"Failed to create topup request: {exc}")
 
     return CreateWalletTopupResponse(
@@ -256,7 +256,6 @@ def create_wallet_topup(request: HttpRequest, data: CreateWalletTopupRequest):
 
 @router.get("/wallet/topup-history/", response=List[WalletTopupStatusResponse], auth=JWTAuth())
 def get_wallet_topup_history(request: HttpRequest):
-    # Detailed history will be implemented separately; keep behaviour stable for tests.
     return []
 
 
@@ -266,7 +265,7 @@ def get_topup_status(request: HttpRequest, intent_id: str):
         status_data = topup_service.get_topup_status(intent_id, request.auth)
     except ValueError as exc:
         raise HttpError(404, str(exc))
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  
         raise HttpError(500, f"Failed to get topup status: {exc}")
 
     intent = status_data["intent"]
@@ -308,7 +307,7 @@ def create_symbol_order_endpoint(request: HttpRequest, data: CreateSymbolOrderRe
         )
     except ValueError as exc:
         raise HttpError(400, str(exc))
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc: 
         raise HttpError(500, f"Failed to create symbol order: {exc}")
 
     if isinstance(result, PaySymbolOrder):
@@ -441,7 +440,7 @@ def get_user_symbol_licenses(request: HttpRequest, page: int = 1, limit: int = 2
     try:
         licenses_data = symbol_purchase_service.get_user_symbol_licenses(request.auth, page, limit)
         return [UserSymbolLicenseResponse(**license) for license in licenses_data["results"]]
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc: 
         raise HttpError(500, f"Failed to get licenses: {exc}")
 
 

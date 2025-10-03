@@ -4,7 +4,6 @@ from typing import Optional, List
 from datetime import datetime
 
 
-# User DTOs
 class UserResponse(Schema):
     id: int
     email: str
@@ -185,9 +184,6 @@ class SepayWebhookResponse(Schema):
     processed_at: str
 
 
-# ============================================================================
-# SYMBOL PURCHASE SCHEMAS
-# ============================================================================
 
 class SymbolOrderItemRequest(Schema):
     symbol_id: int
@@ -224,7 +220,6 @@ class CreateSymbolOrderResponse(Schema):
     items: List[SymbolOrderItemResponse]
     created_at: str
     message: str
-    # Optional payment intent info for SePay orders
     payment_intent_id: Optional[str] = None
     qr_code_url: Optional[str] = None
     deep_link: Optional[str] = None

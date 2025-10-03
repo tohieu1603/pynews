@@ -153,7 +153,7 @@ class SymbolPurchaseService:
             order.payment_intent = intent
             order.save(update_fields=["payment_intent", "updated_at"])
             return intent
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc: 
             logger.exception(
                 "Failed to create SePay intent for order %s: %s", order.order_id, exc
             )

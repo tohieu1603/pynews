@@ -2,7 +2,7 @@
 from ninja import Router
 from datetime import datetime
 import logging
-
+import requests
 from apps.notification.schemas import TradingViewWebhookSchema
 from apps.notification.services.notification_utils import send_symbol_signal_to_subscribers
 from apps.notification.repositories.notification_repository import WebhookLogRepository
@@ -31,7 +31,6 @@ def tradingview_webhook(request, payload: TradingViewWebhookSchema):
         try:
             symbol = Symbol.objects.get(name=symbol_name)
         except Symbol.DoesNotExist:
-            # Lưu webhook log với lỗi
             webhook_repo.create(
                 source=WebhookSource.TRADINGVIEW,
                 symbol=symbol_name,
@@ -62,9 +61,8 @@ def tradingview_webhook(request, payload: TradingViewWebhookSchema):
 
         description = " | ".join(description_parts)
 
-        # Lưu toàn bộ payload gốc + metadata chi tiết
         metadata = {
-            "raw_payload": payload.dict(),  # Toàn bộ payload gốc
+            "raw_payload": payload.dict(),  
             "trans_id": payload.TransId,
             "bot_name": payload.botName,
             "action": payload.Action,
@@ -84,7 +82,14 @@ def tradingview_webhook(request, payload: TradingViewWebhookSchema):
             "distance_to_tp": payload.DistanceToTP,
             "volatility_adjusted_profit": payload.VolatilityAdjustedProfit,
         }
-
+        url = "https://backtest.togogo.vn/api/v10/BackTest/wh"
+        response = requests.post(
+            url,
+            json=metadata,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        print("Posted to backtest.togogo.vn, response:", response.status_code, response.text)
         result = send_symbol_signal_to_subscribers(
             symbol_id=symbol.id,
             symbol_name=symbol_name,
@@ -105,7 +110,6 @@ def tradingview_webhook(request, payload: TradingViewWebhookSchema):
             "message": f"Sent to {result['sent_count']} users"
         }
 
-        # Lưu webhook log thành công
         webhook_repo.create(
             source=WebhookSource.TRADINGVIEW,
             symbol=symbol_name,
