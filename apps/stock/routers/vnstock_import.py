@@ -5,7 +5,7 @@ from typing import Dict, Any
 from ninja import Router, Query
 from ninja.errors import HttpError
 from ninja.pagination import paginate, PageNumberPagination
-from apps.stock.schemas import SymbolOut, CompanyOut, SymbolList, SubCompanyOut, SymbolOutBasic
+from apps.stock.schemas import CompanyOut, SymbolList, SubCompanyOut, SymbolOutBasic
 from apps.stock.services.symbol_service import SymbolService
 from typing import List
 from apps.stock.services.vnstock_import_service import VnstockImportService
@@ -15,10 +15,35 @@ from apps.stock.services.rate_limiter import get_rate_limiter
 router = Router(tags=["vnstock-import"])
 
 
-@router.post("/symbols/import_all", response=List[SymbolOut])
-def import_all_symbols(request):
-    service = SymbolService()
-    return service.import_all_symbols()
+@router.post("/symbols/import_all")
+def import_all_symbols(request, exchange: str = "HSX", force_update: bool = False):
+    """
+    Import ALL stock data (symbols, companies, industries, shareholders, officers, events, sub_companies)
+    for all symbols with detailed logging for each table.
+
+    Query Parameters:
+    - exchange (str): Exchange to import (HSX, HNX, UPCOM). Default: HSX
+    - force_update (bool):
+        - False (default): Resume mode - only import symbols missing data
+        - True: Force update mode - re-import all symbols to get latest data
+    """
+    import time
+
+    try:
+        start_time = time.time()
+        service = SymbolService()
+        result = service.import_all_symbols(exchange=exchange, force_update=force_update)
+        processing_time = time.time() - start_time
+        result["processing_time"] = round(processing_time, 2)
+
+        return result
+
+    except Exception as e:
+        return {
+            "error": f"Import failed: {str(e)}",
+            "exchange": exchange,
+            "force_update": force_update
+        }
 
 
 @router.post("/import/symbols")
@@ -192,82 +217,3 @@ def reset_rate_limit_stats(request):
     return {"message": "Rate limit statistics reset"}
 
 
-@router.post("/import/fast")
-def fast_import_with_cache(request, exchange: str = "HSX"):
-    """Import nhanh sử dụng cache service và rate limiting"""
-    service = VnstockImportService(per_symbol_sleep=0.5)  
-
-    results = {
-        "symbols": [],
-        "companies": [],
-        "industries": [],
-        "shareholders": [],
-        "officers": [],
-        "events": [],
-        "sub_companies": []
-    }
-
-    try:
-        print("=== Starting fast import with cache ===")
-        results["symbols"] = service.import_all_symbols_from_vnstock(exchange)
-
-        results["companies"] = service.import_companies_from_vnstock(exchange)
-
-        results["industries"] = service.import_industries_for_symbols()
-
-        results["shareholders"] = service.import_shareholders_for_all_symbols()
-        results["officers"] = service.import_officers_for_all_symbols()
-        results["events"] = service.import_events_for_all_symbols()
-        results["sub_companies"] = service.import_sub_companies_for_all_symbols()
-
-        return {
-            "message": "Fast import completed with cache optimization",
-            "exchange": exchange,
-            "summary": {
-                "symbols_imported": len(results["symbols"]),
-                "companies_imported": len(results["companies"]),
-                "industries_mapped": len(results["industries"]),
-                "shareholders_imported": len(results["shareholders"]),
-                "officers_imported": len(results["officers"]),
-                "events_imported": len(results["events"]),
-                "sub_companies_imported": len(results["sub_companies"])
-            },
-            "detailed_results": results
-        }
-
-    except Exception as e:
-        return {
-            "error": f"Fast import failed: {str(e)}",
-            "partial_results": results
-        }
-
-
-@router.post("/import/all-complete")
-def import_all_complete(request, exchange: str = "HSX", force_update: bool = False):
-    """
-    Import ALL stock data (symbols, companies, industries, shareholders, officers, events, sub_companies)
-    for all symbols with detailed logging for each table.
-
-    Query Parameters:
-    - exchange (str): Exchange to import (HSX, HNX, UPCOM). Default: HSX
-    - force_update (bool):
-        - False (default): Resume mode - only import symbols missing data
-        - True: Force update mode - re-import all symbols to get latest data
-    """
-    import time
-
-    try:
-        start_time = time.time()
-        service = VnstockImportService(per_symbol_sleep=0.5)
-        result = service.import_all_complete(exchange=exchange, force_update=force_update)
-        processing_time = time.time() - start_time
-        result["processing_time"] = round(processing_time, 2)
-
-        return result
-
-    except Exception as e:
-        return {
-            "error": f"Import all complete failed: {str(e)}",
-            "exchange": exchange,
-            "force_update": force_update
-        }

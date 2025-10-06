@@ -105,10 +105,19 @@ def _http_get(url: str, *, params: Optional[Dict[str, Any]] = None, headers: Opt
 
 
 def _http_post(url: str, *, data: Dict[str, Any]) -> Dict[str, Any]:
+    import json
+    print(f"[DEBUG] POST {url}")
+    print(f"[DEBUG] Data: {json.dumps(data, indent=2)}")
     response = requests.post(url, data=data, timeout=HTTP_TIMEOUT)
+    print(f"[DEBUG] Response status: {response.status_code}")
+    print(f"[DEBUG] Response text: {response.text[:500]}")
     if response.status_code != 200:
-        detail = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-        raise GoogleTokenExchangeError(f"Google token endpoint error: {detail}")
+        if response.headers.get("content-type", "").startswith("application/json"):
+            error_data = response.json()
+            error_msg = error_data.get("error_description") or error_data.get("error") or str(error_data)
+        else:
+            error_msg = response.text
+        raise GoogleTokenExchangeError(f"Google token endpoint error: {error_msg}")
     return response.json()
 
 
@@ -248,14 +257,14 @@ class GoogleOAuthService:
 
     def exchange_code(self, request: GoogleLoginRequest) -> Dict[str, Any]:
         data: Dict[str, Any] = {
-            "code": request.code,
-            "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret,
-            "redirect_uri": request.redirect_uri or self.config.redirect_uri,
+            "code": request.code.strip(),
+            "client_id": self.config.client_id.strip(),
+            "client_secret": self.config.client_secret.strip(),
+            "redirect_uri": (request.redirect_uri or self.config.redirect_uri).strip(),
             "grant_type": "authorization_code",
         }
         if request.code_verifier:
-            data["code_verifier"] = request.code_verifier
+            data["code_verifier"] = request.code_verifier.strip()
         return _http_post(TOKEN_ENDPOINT, data=data)
 
     def fetch_profile_from_access_token(self, access_token: str) -> GoogleProfile:
@@ -311,7 +320,7 @@ def google_auth_url(request, state: Optional[str] = None):
         return _build_error(str(exc), status=500)
 
 
-@router.post("/google/login", response=TokenResponse)
+@router.post("/google/login")
 def google_login(request, payload: GoogleLoginRequest):
     try:
         service = _google_service()
@@ -329,9 +338,12 @@ def google_login(request, payload: GoogleLoginRequest):
             user=UserPayload(**_serialize_user(user)),
         )
     except GoogleOAuthError as exc:
-        return _build_error(str(exc), status=400)
-    except Exception as exc:
         return _build_error("Google sign-in failed", status=400, detail=str(exc))
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        error_detail = str(exc) if exc else "Unknown error"
+        return _build_error("Google sign-in failed", status=400, detail=error_detail)
 
 
 @router.post("/google/login-id-token", response=TokenResponse)

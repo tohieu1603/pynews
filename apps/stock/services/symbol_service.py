@@ -2,7 +2,6 @@ import time
 from typing import Any, Dict, List, Optional
 from django.http import Http404
 import pandas as pd
-from django.db import transaction
 from django.shortcuts import get_object_or_404
 from vnstock import Listing
 from ninja.errors import HttpError
@@ -73,104 +72,243 @@ class SymbolService:
         return DataMappers.map_officers(df)
     
     
-    def import_all_symbols(self) -> List[Dict[str, Any]]:
+    def import_all_symbols(self, exchange: str = "HSX", force_update: bool = False) -> Dict[str, Any]:
         """
-        Import toàn bộ symbols đơn giản, không dùng batch, rate limit hay bulk.
+        Import ALL stock data (symbols, companies, industries, shareholders, officers, events, sub_companies)
+        for all symbols with detailed logging for each table.
+
+        Args:
+            exchange: Exchange to import (HSX, HNX, UPCOM). Default: HSX
+            force_update: If False (default), skip symbols that already have data.
+                         If True, re-import all symbols (to get latest data from vnstock).
         """
-        print("Starting import_all_symbols with DB-first seeding...")
-        results = []
-        
+        from apps.stock.models import ShareHolder, Officers, Events, SubCompany
+
+        mode_text = "FORCE UPDATE MODE" if force_update else "RESUME MODE"
+
+        result = {
+            "exchange": exchange,
+            "mode": mode_text,
+            "total_symbols": 0,
+            "symbols_processed": 0,
+            "symbols_failed": 0,
+            "total_companies": 0,
+            "total_industries": 0,
+            "total_shareholders": 0,
+            "total_officers": 0,
+            "total_events": 0,
+            "total_sub_companies": 0,
+            "errors": [],
+            "details": []
+        }
+
+        print(f"\n{'='*60}")
+        print(f"STOCK IMPORT - {mode_text}")
+        print(f"Exchange: {exchange}")
+        print(f"{'='*60}\n")
+
         try:
-            if not hasattr(self.vn_client, 'fetch_company_bundle_safe'):
-                print("Warning: fetch_company_bundle_safe not available, using fetch_company_bundle")
-                fetch_method = self.vn_client.fetch_company_bundle
+            # Step 1: Import Symbols from vnstock
+            print(f"[1/7] → Importing Symbols from {exchange}...", end=" ")
+            symbols_imported = self._import_symbols_from_vnstock(exchange)
+            result["total_symbols"] = symbols_imported
+            print(f"✓ SUCCESS ({symbols_imported} symbols)")
+
+            # Get symbols to process
+            symbols = Symbol.objects.all().order_by('name')
+
+            if not force_update:
+                symbols_to_process = []
+                for symbol in symbols:
+                    has_company = hasattr(symbol, 'company') and symbol.company is not None
+                    has_shareholders = has_company and ShareHolder.objects.filter(company=symbol.company).exists()
+                    has_officers = has_company and Officers.objects.filter(company=symbol.company).exists()
+                    has_events = has_company and Events.objects.filter(company=symbol.company).exists()
+                    has_subs = has_company and SubCompany.objects.filter(parent=symbol.company).exists()
+
+                    # Process if missing any data
+                    if not (has_company and has_shareholders and has_officers and has_events and has_subs):
+                        symbols_to_process.append(symbol)
+
+                symbols = symbols_to_process
+                print(f"  ℹ Resume mode: {len(symbols)} symbols need processing\n")
             else:
-                fetch_method = self.vn_client.fetch_company_bundle_safe
-                
-        except Exception as e:
-            print(f"Error initializing client method: {e}")
-            return results
-        # Seed DB with all symbols once if empty
-        try:
-            db_symbols = list(repo.qs_all_symbols())
-            if not db_symbols or all(not safe_str(s.name) for s in db_symbols):
-                seeded = 0
-                for symbol_name, exchange in self.vn_client.iter_all_symbols(exchange="HSX"):
-                    repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})
-                    seeded += 1
-                print(f"Seeded {seeded} symbols from vnstock")
-                db_symbols = list(repo.qs_all_symbols())
-            else:
-                print(f"Found {len(db_symbols)} symbols in DB. Skipping vnstock seed.")
-        except Exception as e:
-            print(f"Error during symbol seeding/check: {e}")
-            db_symbols = list(repo.qs_all_symbols())
+                symbols = list(symbols)
+                print(f"  ℹ Force update: Processing all {len(symbols)} symbols\n")
 
-        for idx, sym in enumerate(db_symbols):
-            symbol_name = sym.name
-            exchange = getattr(sym, 'exchange', None)
-            try:
-                bundle, ok = fetch_method(symbol_name)
-                if not ok or not bundle:
-                    print(f"Skip {symbol_name} ({exchange}): no bundle")
-                    continue
+            # Step 2-7: Process each symbol with all data
+            total_symbols = len(symbols)
+            for idx, symbol in enumerate(symbols, 1):
+                symbol_detail = {
+                    "symbol": symbol.name,
+                    "success": False,
+                    "company": False,
+                    "industries": 0,
+                    "shareholders": 0,
+                    "officers": 0,
+                    "events": 0,
+                    "sub_companies": 0,
+                    "errors": []
+                }
 
-                overview_df = bundle.get("overview_df_TCBS")
-                if overview_df is None or overview_df.empty:
-                    overview_df = bundle.get("overview_df_VCI")
-                if overview_df is None or overview_df.empty:
-                    print(f"Skip {symbol_name} ({exchange}): empty overview_df")
-                    continue
-
-                data = overview_df.iloc[0]
-
-                with transaction.atomic():
-                    symbol = repo.upsert_symbol(symbol_name, defaults={"exchange": exchange})
-
-                    try:
-                        industries = self.industry_resolver.resolve_symbol_industries(bundle, symbol_name)
-                        for industry in industries:
-                            repo.upsert_symbol_industry(symbol, industry)
-                    except Exception as e:
-                        print(f"Error processing industries for {symbol_name}: {e}")
-                        default_industry = repo.get_or_create_industry("Unknown Industry")
-                        repo.upsert_symbol_industry(symbol, default_industry)
-
-                    try:
-                        company = self.company_processor.process_company_data(bundle, data)
-                        symbol.company = company
-                        symbol.save()
-                    except Exception as e:
-                        print(f"Error processing company for {symbol_name}: {e}")
+                try:
+                    # Fetch bundle data
+                    bundle, ok = self.cache_service.fetch_company_bundle_with_cache(symbol.name)
+                    if not ok or not bundle:
+                        print(f"\n[{idx}/{total_symbols}] {symbol.name}")
+                        print(f"  ⊘ SKIPPED: No bundle data")
+                        symbol_detail["errors"].append("No bundle data")
+                        result["symbols_failed"] += 1
                         continue
 
-                    try:
-                        self.company_processor.process_related_data(company, bundle)
-                    except Exception as e:
-                        print(f"Error processing related data for {symbol_name}: {e}")
-
-                    try:
-                        result = self.payload_builder.build_symbol_payload(symbol, company)
-                        results.append(result)
-                        print(f"Processed {symbol_name} successfully")
-                    except Exception as e:
-                        print(f"Error building payload for {symbol_name}: {e}")
+                    # Get overview data
+                    overview_df = bundle.get("overview_df_TCBS")
+                    if overview_df is None or overview_df.empty:
+                        overview_df = bundle.get("overview_df_VCI")
+                    if overview_df is None or overview_df.empty:
+                        print(f"\n[{idx}/{total_symbols}] {symbol.name}")
+                        print(f"  ⊘ SKIPPED: No overview data")
+                        symbol_detail["errors"].append("No overview data")
+                        result["symbols_failed"] += 1
                         continue
 
-                ensure_django_connection_closed()
-                reset_queries()
+                    print(f"\nSuccessfully fetched data for {symbol.name}")
 
-                if self.per_symbol_sleep > 0:
-                    time.sleep(self.per_symbol_sleep)
+                    data = overview_df.iloc[0]
 
-            except Exception as e:
-                print(f"Error processing {symbol_name}: {e}")
-                ensure_django_connection_closed()
-                reset_queries()
-                continue
-        
-        print(f"Import completed! {len(results)} symbols processed")
-        return results
+                    # Import Company
+                    company = self.company_processor.process_company_data(bundle, data)
+                    symbol.company = company
+                    symbol.save()
+                    symbol_detail["company"] = True
+                    result["total_companies"] += 1
+
+                    # Import Industries
+                    industries = self.industry_resolver.resolve_symbol_industries(bundle, symbol.name)
+                    for industry in industries:
+                        repo.upsert_symbol_industry(symbol, industry)
+                    symbol_detail["industries"] = len(industries)
+                    result["total_industries"] += len(industries)
+
+                    # Import Shareholders
+                    print(f"  → Importing Shareholders...", end=" ", flush=True)
+                    shareholders_df = bundle.get("shareholders_df")
+                    if shareholders_df is not None and not shareholders_df.empty:
+                        shareholder_rows = DataMappers.map_shareholders(shareholders_df)
+                        repo.upsert_shareholders(company, shareholder_rows)
+                        symbol_detail["shareholders"] = len(shareholder_rows)
+                        result["total_shareholders"] += len(shareholder_rows)
+                        print(f"✓ SUCCESS ({len(shareholder_rows)} records)")
+                    else:
+                        print(f"⊘ SKIPPED (no data)")
+
+                    # Import Officers
+                    print(f"  → Importing Officers...", end=" ", flush=True)
+                    officers_df = bundle.get("officers_df")
+                    if officers_df is not None and not officers_df.empty:
+                        officer_rows = DataMappers.map_officers(officers_df)
+                        repo.upsert_officers(company, officer_rows)
+                        symbol_detail["officers"] = len(officer_rows)
+                        result["total_officers"] += len(officer_rows)
+                        print(f"✓ SUCCESS ({len(officer_rows)} records)")
+                    else:
+                        print(f"⊘ SKIPPED (no data)")
+
+                    # Import Events
+                    print(f"  → Importing Events...", end=" ", flush=True)
+                    events_df = bundle.get("events_df")
+                    if events_df is not None and not events_df.empty:
+                        event_rows = DataMappers.map_events(events_df)
+                        repo.upsert_events(company, event_rows)
+                        symbol_detail["events"] = len(event_rows)
+                        result["total_events"] += len(event_rows)
+                        print(f"✓ SUCCESS ({len(event_rows)} records)")
+                    else:
+                        print(f"⊘ SKIPPED (no data)")
+
+                    # Import Sub Companies
+                    print(f"  → Importing Sub Companies...", end=" ", flush=True)
+                    subsidiaries_df = bundle.get("subsidiaries")
+                    if subsidiaries_df is not None and not subsidiaries_df.empty:
+                        sub_company_rows = DataMappers.map_sub_company(subsidiaries_df)
+                        repo.upsert_sub_company(sub_company_rows, company)
+                        symbol_detail["sub_companies"] = len(sub_company_rows)
+                        result["total_sub_companies"] += len(sub_company_rows)
+                        print(f"✓ SUCCESS ({len(sub_company_rows)} records)")
+                    else:
+                        print(f"⊘ SKIPPED (no data)")
+
+                    symbol_detail["success"] = True
+                    result["symbols_processed"] += 1
+                    print(f"  ✓ COMPLETED: All tables imported successfully")
+
+                except Exception as e:
+                    error_msg = f"Import error: {str(e)}"
+                    symbol_detail["errors"].append(error_msg)
+                    result["symbols_failed"] += 1
+                    print(f"  ✗ FAILED: {error_msg}")
+
+                finally:
+                    result["details"].append(symbol_detail)
+                    ensure_django_connection_closed()
+                    reset_queries()
+
+                    if self.per_symbol_sleep > 0:
+                        time.sleep(self.per_symbol_sleep)
+
+            # Final summary
+            print(f"\n{'='*60}")
+            print(f"STOCK IMPORT COMPLETE SUMMARY")
+            print(f"{'='*60}")
+            print(f"Mode:                 {mode_text}")
+            print(f"Exchange:             {exchange}")
+            print(f"Total Symbols:        {result['total_symbols']}")
+            print(f"Processed:            {result['symbols_processed']}")
+            print(f"Failed:               {result['symbols_failed']}")
+            print(f"Companies:            {result['total_companies']} records")
+            print(f"Industries:           {result['total_industries']} mappings")
+            print(f"Shareholders:         {result['total_shareholders']} records")
+            print(f"Officers:             {result['total_officers']} records")
+            print(f"Events:               {result['total_events']} records")
+            print(f"Sub Companies:        {result['total_sub_companies']} records")
+            print(f"{'='*60}\n")
+
+            return result
+
+        except Exception as e:
+            error_msg = f"Import failed: {str(e)}"
+            result["errors"].append(error_msg)
+            print(f"\n✗ IMPORT FAILED: {error_msg}")
+            return result
+
+    def _import_symbols_from_vnstock(self, exchange: str = "HSX") -> int:
+        """Import symbols from vnstock and return count"""
+        try:
+            symbols_df = self.cache_service.fetch_symbols_with_cache(exchange)
+            if symbols_df is None or symbols_df.empty:
+                print("Failed to fetch symbols from vnstock")
+                return 0
+
+            count = 0
+            for _, row in symbols_df.iterrows():
+                try:
+                    symbol_name = safe_str(
+                        row.get('symbol') or row.get('ticker') or
+                        row.get('Symbol') or row.get('SYMBOL')
+                    )
+                    if not symbol_name:
+                        continue
+
+                    repo.upsert_symbol(symbol_name, defaults={'exchange': exchange})
+                    count += 1
+                except Exception as e:
+                    print(f"Error importing symbol: {e}")
+                    continue
+
+            return count
+        except Exception as e:
+            print(f"Error in _import_symbols_from_vnstock: {e}")
+            return 0
     
     def list_symbols_payload(self) -> List[Dict[str, Any]]:
         """List all symbols with industries and minimal company info."""

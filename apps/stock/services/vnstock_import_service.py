@@ -936,19 +936,19 @@ class VnstockImportService:
             if shareholders_df is None or shareholders_df.empty:
                 return result
 
-            from apps.stock.models import ShareHolder
-
+            shareholder_rows = []
             for _, row in shareholders_df.iterrows():
-                try:
-                    repo.upsert_shareholder({
-                        'company': symbol.company,
-                        'shareholder_name': safe_str(row.get('shareholder_name') or row.get('name')),
-                        'shares': safe_int(row.get('shares') or row.get('ownPercent')),
-                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
-                    })
-                    result["count"] += 1
-                except Exception:
-                    continue
+                shareholder_row = {
+                    'share_holder': safe_str(row.get('shareholder') or row.get('share_holder') or row.get('name')),
+                    'quantity': safe_int(row.get('quantity') or row.get('shares')),
+                    'share_own_percent': safe_decimal(row.get('percentage') or row.get('share_own_percent') or row.get('ownership')),
+                    'update_date': to_datetime(row.get('date') or row.get('update_date'))
+                }
+                shareholder_rows.append(shareholder_row)
+
+            if shareholder_rows:
+                repo.upsert_shareholders(symbol.company, shareholder_rows)
+                result["count"] = len(shareholder_rows)
 
         except Exception as e:
             result["errors"].append(str(e))
@@ -971,20 +971,19 @@ class VnstockImportService:
             if officers_df is None or officers_df.empty:
                 return result
 
-            from apps.stock.models import Officers
-
+            officer_rows = []
             for _, row in officers_df.iterrows():
-                try:
-                    repo.upsert_officer({
-                        'company': symbol.company,
-                        'officer_name': safe_str(row.get('officer_name') or row.get('name')),
-                        'position': safe_str(row.get('position')),
-                        'shares': safe_int(row.get('shares') or row.get('ownPercent')),
-                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
-                    })
-                    result["count"] += 1
-                except Exception:
-                    continue
+                officer_row = {
+                    'officer_name': safe_str(row.get('officer_name') or row.get('name')),
+                    'officer_position': safe_str(row.get('officer_position') or row.get('position')),
+                    'position_short_name': safe_str(row.get('position_short_name') or row.get('short_name')),
+                    'officer_owner_percent': safe_decimal(row.get('officer_owner_percent') or row.get('ownership') or row.get('percentage'))
+                }
+                officer_rows.append(officer_row)
+
+            if officer_rows:
+                repo.upsert_officers(symbol.company, officer_rows)
+                result["count"] = len(officer_rows)
 
         except Exception as e:
             result["errors"].append(str(e))
@@ -1007,25 +1006,19 @@ class VnstockImportService:
             if events_df is None or events_df.empty:
                 return result
 
-            from apps.stock.models import Events
-
+            event_rows = []
             for _, row in events_df.iterrows():
-                try:
-                    repo.upsert_event({
-                        'company': symbol.company,
-                        'event_name': safe_str(row.get('event_name') or row.get('eventName')),
-                        'event_code': safe_str(row.get('event_code') or row.get('eventCode')),
-                        'event_date': to_datetime(row.get('event_date') or row.get('exrightDate')),
-                        'ex_right_date': to_datetime(row.get('ex_right_date') or row.get('exrightDate')),
-                        'record_date': to_datetime(row.get('record_date') or row.get('recordDate')),
-                        'issue_date': to_datetime(row.get('issue_date') or row.get('issueDate')),
-                        'ratio': safe_str(row.get('ratio')),
-                        'exercise_price': safe_decimal(row.get('exercise_price') or row.get('exercisePrice')),
-                        'exercise_ratio': safe_str(row.get('exercise_ratio') or row.get('exerciseRatio')),
-                    })
-                    result["count"] += 1
-                except Exception:
-                    continue
+                event_row = {
+                    'event_title': safe_str(row.get('event_title') or row.get('title')),
+                    'public_date': to_datetime(row.get('public_date') or row.get('date')),
+                    'issue_date': to_datetime(row.get('issue_date')),
+                    'source_url': safe_str(row.get('source_url') or row.get('url'))
+                }
+                event_rows.append(event_row)
+
+            if event_rows:
+                repo.upsert_events(symbol.company, event_rows)
+                result["count"] = len(event_rows)
 
         except Exception as e:
             result["errors"].append(str(e))
@@ -1044,25 +1037,21 @@ class VnstockImportService:
             if not ok or not bundle:
                 return result
 
-            subsidiaries_df = bundle.get("subsidiaries_df")
+            subsidiaries_df = bundle.get("subsidiaries")
             if subsidiaries_df is None or subsidiaries_df.empty:
                 return result
 
-            from apps.stock.models import SubCompany
-
+            sub_company_rows = []
             for _, row in subsidiaries_df.iterrows():
-                try:
-                    repo.upsert_sub_company({
-                        'company': symbol.company,
-                        'subsidiary_name': safe_str(row.get('subsidiary_name') or row.get('companyName')),
-                        'charter_capital': safe_int(row.get('charter_capital') or row.get('charterCapital')),
-                        'own_percent': safe_decimal(row.get('own_percent') or row.get('ownPercent')),
-                        'establish_date': to_datetime(row.get('establish_date') or row.get('establishDate')),
-                        'business': safe_str(row.get('business')),
-                    })
-                    result["count"] += 1
-                except Exception:
-                    continue
+                sub_company_row = {
+                    'company_name': safe_str(row.get('sub_company_name') or row.get('company_name') or row.get('name')),
+                    'sub_own_percent': safe_decimal(row.get('sub_own_percent') or row.get('ownership_percentage') or row.get('percentage'))
+                }
+                sub_company_rows.append(sub_company_row)
+
+            if sub_company_rows:
+                repo.upsert_sub_company(sub_company_rows, symbol.company)
+                result["count"] = len(sub_company_rows)
 
         except Exception as e:
             result["errors"].append(str(e))

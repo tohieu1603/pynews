@@ -2,6 +2,8 @@
 import math
 from datetime import datetime, date, time as dtime
 from typing import Any, Optional
+from django.utils import timezone
+import pytz
 
 def _is_nan(v: Any) -> bool:
     return isinstance(v, float) and math.isnan(v)
@@ -82,23 +84,45 @@ def to_epoch_seconds(value: Any) -> Optional[int]:
     return None
 
 def to_datetime(value: Any) -> Optional[datetime]:
+    """Convert value to timezone-aware datetime"""
     try:
         if value is None or _is_nan(value):
             return None
+
+        # If already datetime, make it timezone-aware
         if isinstance(value, datetime):
+            if timezone.is_naive(value):
+                return timezone.make_aware(value, pytz.UTC)
             return value
+
+        # Convert from timestamp
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(float(value))
+            dt = datetime.fromtimestamp(float(value), tz=pytz.UTC)
+            return dt
+
+        # Convert from date
         if isinstance(value, date):
-            return datetime.combine(value, dtime.min)
+            dt = datetime.combine(value, dtime.min)
+            return timezone.make_aware(dt, pytz.UTC)
+
+        # Parse from string
         if isinstance(value, str):
             try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if timezone.is_naive(dt):
+                    return timezone.make_aware(dt, pytz.UTC)
+                return dt
             except Exception:
                 try:
-                    return datetime.fromtimestamp(float(value))
+                    # Try parsing as YYYY-MM-DD
+                    dt = datetime.strptime(value.strip(), "%Y-%m-%d")
+                    return timezone.make_aware(dt, pytz.UTC)
                 except Exception:
-                    return None
+                    try:
+                        dt = datetime.fromtimestamp(float(value), tz=pytz.UTC)
+                        return dt
+                    except Exception:
+                        return None
     except Exception:
         return None
     return None

@@ -8,6 +8,7 @@ from apps.stock.utils.safe import (
     safe_int,
     safe_str,
     to_epoch_seconds,
+    to_datetime,
 )
 
 
@@ -79,8 +80,8 @@ class DataMappers:
                 {
                     "event_title": safe_str(r.get("event_title", "No Title")),
                     "source_url": safe_str(r.get("source_url")),
-                    "issue_date": safe_date_passthrough(r.get("issue_date")),
-                    "public_date": safe_date_passthrough(r.get("public_date")),
+                    "issue_date": to_datetime(r.get("issue_date")),
+                    "public_date": to_datetime(r.get("public_date")),
                 }
             )
         return rows
