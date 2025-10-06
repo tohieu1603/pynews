@@ -28,7 +28,8 @@ def get_calendar(request, filters: Query[CalendarFilters]) -> List[EconomicEvent
     options = CalendarFetchOptions(
         date_from=date_from,
         date_to=date_to,
-        skip_holidays=True,  
+        skip_holidays=True,
+        importance=[2, 3],
     )
 
     events = fetch_events(options)

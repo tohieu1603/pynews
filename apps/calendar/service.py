@@ -88,7 +88,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--importance",
         nargs="*",
         type=int,
-        choices=[1, 2, 3],
+        choices=[2, 3],
         help="Lọc theo độ quan trọng (số đầu bò: 1-3). Bỏ trống để lấy tất cả.",
     )
     parser.add_argument(
@@ -242,7 +242,7 @@ def parse_holiday_row(row: BeautifulSoup, current_date: datetime) -> EconomicEve
         country=country_name,
         country_code=country_code,
         currency=currency,
-        importance=None,
+        importance=2,
         title=title_text,
         actual=None,
         forecast=None,
