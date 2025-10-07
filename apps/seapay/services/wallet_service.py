@@ -37,7 +37,7 @@ class WalletService:
 
         if status and wallet.status != status and created:
             wallet.status = status
-            wallet.save(update_fields=["status", "updated_at"])
+            wallet.save(update_fields=["status"])
 
         return wallet
 
@@ -78,7 +78,7 @@ class WalletService:
             )
 
             wallet.balance = balance_after
-            wallet.save(update_fields=["balance", "updated_at"])
+            wallet.save(update_fields=["balance"])
 
         return ledger_entry
 
@@ -122,7 +122,7 @@ class WalletService:
             )
 
             wallet.balance = balance_after
-            wallet.save(update_fields=["balance", "updated_at"])
+            wallet.save(update_fields=["balance"])
 
         return ledger_entry
 

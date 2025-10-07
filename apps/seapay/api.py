@@ -89,25 +89,36 @@ def sepay_webhook(request: HttpRequest, payload: SepayWebhookRequest):
 def sepay_callback(request: HttpRequest):
     """Fallback callback endpoint kept for backwards compatibility."""
     logger.info("Received callback at %s with method %s", request.path, request.method)
+    logger.info(f"Request body: {request.body}")
+    logger.info(f"Request headers: {request.headers}")
 
     payload: Optional[dict] = None
     try:
         if request.body:
-            payload = request.json()
-    except Exception:
+            import json
+            payload = json.loads(request.body)
+            logger.info(f"Parsed JSON payload: {payload}")
+    except Exception as e:
+        logger.error(f"Failed to parse JSON: {e}")
         payload = None
 
     if not payload and request.POST:
         payload = request.POST.dict()
+        logger.info(f"Using POST data: {payload}")
 
     if not payload and request.GET:
         payload = request.GET.dict()
+        logger.info(f"Using GET data: {payload}")
 
     if not payload:
+        logger.error("Could not parse request data from any source")
         return PaymentCallbackResponse(message="Could not parse request data")
+
+    logger.info(f"Callback payload: {payload}")
 
     try:
         if payload.get("content", "").startswith("TOPUP"):
+            logger.info(f"Processing TOPUP webhook with content: {payload.get('content')}")
             result = topup_service.process_webhook_event(payload)
         else:
             result = payment_service.process_callback(

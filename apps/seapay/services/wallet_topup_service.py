@@ -137,9 +137,10 @@ class WalletTopupService:
         BÆ°á»›c 4: Äá»‘i soÃ¡t vÃ  táº¡o payment
         """
         bank_tx = self._store_bank_transaction(sepay_tx_id, transaction_data)
-        
+
         content = transaction_data.get('content', '')
-        intent = self._find_intent_by_content(content)
+        reference_code = transaction_data.get('referenceCode')
+        intent = self._find_intent_by_content(content, reference_code)
         
         if not intent:
             return None
@@ -302,7 +303,19 @@ class WalletTopupService:
         )
         return bank_tx
     
-    def _find_intent_by_content(self, content: str) -> Optional[PayPaymentIntent]:
+    def _find_intent_by_content(self, content: str, reference_code: str = None) -> Optional[PayPaymentIntent]:
+        # Try matching by reference_code first (preferred)
+        if reference_code:
+            try:
+                return PayPaymentIntent.objects.get(
+                    reference_code=reference_code,
+                    purpose=IntentPurpose.WALLET_TOPUP,
+                    status__in=[PaymentStatus.REQUIRES_PAYMENT_METHOD, PaymentStatus.PROCESSING]
+                )
+            except PayPaymentIntent.DoesNotExist:
+                pass
+
+        # Fallback to content matching
         try:
             return PayPaymentIntent.objects.get(
                 order_code=content,

@@ -287,7 +287,7 @@ class PaymentService:
             return
 
         order.status = OrderStatus.PAID
-        order.save(update_fields=["status", "updated_at"])
+        order.save(update_fields=["status"])
         self._create_symbol_licenses(order)
         logger.info("Symbol order %s marked as paid", order.order_id)
 

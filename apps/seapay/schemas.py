@@ -262,6 +262,15 @@ class SymbolAccessCheckResponse(Schema):
     expired_at: Optional[str] = None
 
 
+class SubscriptionInfo(Schema):
+    subscription_id: str
+    status: str
+    is_active: bool
+    price: float
+    cycle_days: int
+    next_billing_at: Optional[str] = None
+
+
 class UserSymbolLicenseResponse(Schema):
     license_id: str
     symbol_id: int
@@ -279,6 +288,8 @@ class UserSymbolLicenseResponse(Schema):
     auto_renew: Optional[bool] = False
     payment_method: Optional[str] = None
     order_total_amount: Optional[float] = None
+    # Subscription info (để bật/tắt auto-renew)
+    subscription: Optional[SubscriptionInfo] = None
 
 
 class SymbolOrderHistoryResponse(Schema):

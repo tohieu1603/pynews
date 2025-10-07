@@ -816,14 +816,6 @@ class PayUserSymbolLicense(models.Model):
         blank=True,
         db_comment="Đơn hàng tạo ra license này"
     )
-    subscription = models.ForeignKey(
-        'setting.SymbolAutoRenewSubscription',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='licenses',
-        db_comment="Auto-renew subscription that governs this license"
-    )
     status = models.CharField(
         max_length=20,
         choices=LicenseStatus.choices,
@@ -848,7 +840,6 @@ class PayUserSymbolLicense(models.Model):
             models.Index(fields=['user', 'symbol_id'], name='idx_symbol_lic_user_symbol'),
             models.Index(fields=['status'], name='idx_symbol_lic_status'),
             models.Index(fields=['end_at'], name='idx_symbol_lic_end_at'),
-            models.Index(fields=['subscription'], name='idx_symbol_lic_subscription'),
         ]
         unique_together = [('user', 'symbol_id', 'start_at')]
 

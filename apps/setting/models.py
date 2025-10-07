@@ -61,8 +61,8 @@ class SymbolAutoRenewSubscription(models.Model):
     cycle_days = models.PositiveIntegerField(default=30)
     price = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'))
     payment_method = models.CharField(max_length=30, default='wallet')
-    last_order = models.ForeignKey('seapay.PaySymbolOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='autorenew_subscriptions')
-    current_license = models.ForeignKey('seapay.PayUserSymbolLicense', on_delete=models.SET_NULL, null=True, blank=True, related_name='autorenew_subscriptions')
+    last_order_id = models.UUIDField(null=True, blank=True, db_comment="ID of last PaySymbolOrder")
+    current_license_id = models.UUIDField(null=True, blank=True, db_comment="ID of current PayUserSymbolLicense")
     next_billing_at = models.DateTimeField(null=True, blank=True)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     last_success_at = models.DateTimeField(null=True, blank=True)
@@ -98,24 +98,24 @@ class SymbolAutoRenewSubscription(models.Model):
         return self.status in {AutoRenewStatus.ACTIVE, AutoRenewStatus.PAUSED} and (self.next_billing_at is not None)
 
     def mark_success(self, license_obj):
-        self.current_license = license_obj
+        self.current_license_id = license_obj.license_id if license_obj else None
         self.last_success_at = timezone.now()
         self.consecutive_failures = 0
         self.status = AutoRenewStatus.ACTIVE
-        self.save(update_fields=['current_license', 'last_success_at', 'consecutive_failures', 'status', 'updated_at'])
+        self.save(update_fields=['current_license_id', 'last_success_at', 'consecutive_failures', 'status'])
 
     def mark_failure(self, reason: str | None = None):
         self.consecutive_failures += 1
         self.last_attempt_at = timezone.now()
         if self.consecutive_failures >= self.max_retry_attempts:
             self.status = AutoRenewStatus.SUSPENDED
-        self.save(update_fields=['consecutive_failures', 'last_attempt_at', 'status', 'updated_at'])
+        self.save(update_fields=['consecutive_failures', 'last_attempt_at', 'status'])
 
 
 class SymbolAutoRenewAttempt(models.Model):
     attempt_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     subscription = models.ForeignKey(SymbolAutoRenewSubscription, on_delete=models.CASCADE, related_name='attempts')
-    order = models.ForeignKey('seapay.PaySymbolOrder', on_delete=models.SET_NULL, null=True, blank=True)
+    order_id = models.UUIDField(null=True, blank=True, db_comment="ID of PaySymbolOrder created")
     status = models.CharField(max_length=20, choices=AutoRenewAttemptStatus.choices)
     fail_reason = models.TextField(blank=True)
     charged_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)

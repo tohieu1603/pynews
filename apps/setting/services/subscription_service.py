@@ -72,7 +72,7 @@ class SymbolAutoRenewService:
                         updates["next_billing_at"] = None
                     for field, value in updates.items():
                         setattr(subscription, field, value)
-                    subscription.save(update_fields=list(updates.keys()) + ["updated_at"])
+                    subscription.save(update_fields=list(updates.keys()))
                 else:
                     subscription = SymbolAutoRenewSubscription.objects.create(
                         user=order.user,
@@ -202,7 +202,7 @@ class SymbolAutoRenewService:
         subscription = self._set_status(subscription_id, user, AutoRenewStatus.ACTIVE)
         if subscription.next_billing_at is None and subscription.current_license and subscription.current_license.end_at:
             subscription.next_billing_at = subscription.current_license.end_at
-            subscription.save(update_fields=['next_billing_at', 'updated_at'])
+            subscription.save(update_fields=['next_billing_at'])
 
         now = timezone.now()
         if subscription.payment_method == PaymentMethod.WALLET:
@@ -236,7 +236,7 @@ class SymbolAutoRenewService:
         subscription = self._set_status(subscription_id, user, AutoRenewStatus.CANCELLED)
         subscription.next_billing_at = None
         subscription.current_license = None
-        subscription.save(update_fields=['next_billing_at', 'current_license', 'updated_at'])
+        subscription.save(update_fields=['next_billing_at', 'current_license'])
         return self._serialize_subscription(subscription)
     def get_subscription_attempts(self, subscription_id: str, user: User, limit: int = 20) -> List[Dict]:
         try:
@@ -302,7 +302,7 @@ class SymbolAutoRenewService:
                     )
                     sub.last_attempt_at = now
                     sub.next_billing_at = now + timedelta(minutes=sub.retry_interval_minutes)
-                    sub.save(update_fields=["last_attempt_at", "next_billing_at", "updated_at"])
+                    sub.save(update_fields=["last_attempt_at", "next_billing_at"])
                     skipped += 1
                     continue
 
@@ -401,7 +401,7 @@ class SymbolAutoRenewService:
             raise ValueError("Subscription not found") from exc
         subscription.status = status
         subscription.updated_at = timezone.now()
-        subscription.save(update_fields=['status', 'updated_at'])
+        subscription.save(update_fields=['status'])
         return subscription
 
     def _serialize_subscription(self, sub: SymbolAutoRenewSubscription) -> Dict:

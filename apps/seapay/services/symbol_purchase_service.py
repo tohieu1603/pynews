@@ -157,7 +157,7 @@ class SymbolPurchaseService:
                 },
             )
             order.payment_intent = intent
-            order.save(update_fields=["payment_intent", "updated_at"])
+            order.save(update_fields=["payment_intent"])
             return intent
         except Exception as exc: 
             logger.exception(
@@ -182,10 +182,10 @@ class SymbolPurchaseService:
                 note=f"Symbol purchase order {order.order_id}",
             )
             wallet.balance = ledger_entry.balance_after
-            wallet.save(update_fields=["balance", "updated_at"])
+            wallet.save(update_fields=["balance"])
 
             order.status = OrderStatus.PAID
-            order.save(update_fields=["status", "updated_at"])
+            order.save(update_fields=["status"])
 
         self._create_symbol_licenses(order)
         self.subscription_service.activate_for_order(order)
@@ -225,7 +225,7 @@ class SymbolPurchaseService:
         )
 
         order.payment_intent = intent
-        order.save(update_fields=["payment_intent", "updated_at"])
+        order.save(update_fields=["payment_intent"])
 
         return {
             "intent_id": str(intent.intent_id),
@@ -266,10 +266,10 @@ class SymbolPurchaseService:
             note=f"Symbol purchase order {order.order_id}",
         )
         wallet.balance = ledger_entry.balance_after
-        wallet.save(update_fields=["balance", "updated_at"])
+        wallet.save(update_fields=["balance"])
 
         order.status = OrderStatus.PAID
-        order.save(update_fields=["status", "updated_at"])
+        order.save(update_fields=["status"])
 
         licenses_created = self._create_symbol_licenses(order)
         subscriptions = self.subscription_service.activate_for_order(order)
@@ -311,7 +311,7 @@ class SymbolPurchaseService:
         )
 
         order.payment_intent = intent
-        order.save(update_fields=["payment_intent", "updated_at"])
+        order.save(update_fields=["payment_intent"])
 
         return {
             "intent_id": str(intent.intent_id),
@@ -346,7 +346,7 @@ class SymbolPurchaseService:
             return {"success": True, "message": "Order already processed", "order_id": str(order.order_id)}
 
         order.status = OrderStatus.PAID
-        order.save(update_fields=["status", "updated_at"])
+        order.save(update_fields=["status"])
 
         licenses_created = self._create_symbol_licenses(order)
         self.subscription_service.activate_for_order(order)
@@ -384,10 +384,10 @@ class SymbolPurchaseService:
             note=f"Auto-payment after top-up for order {order.order_id}",
         )
         wallet.balance = ledger_entry.balance_after
-        wallet.save(update_fields=["balance", "updated_at"])
+        wallet.save(update_fields=["balance"])
 
         order.status = OrderStatus.PAID
-        order.save(update_fields=["status", "updated_at"])
+        order.save(update_fields=["status"])
 
         licenses_created = self._create_symbol_licenses(order)
         self.subscription_service.activate_for_order(order)
@@ -425,21 +425,78 @@ class SymbolPurchaseService:
                 elif not end_at:
                     existing.end_at = None
                 existing.order = order
-                existing.save(update_fields=["end_at", "order", "updated_at"])
+                existing.save(update_fields=["end_at", "order"])
                 licenses_created += 1
-                continue
+            else:
+                existing = PayUserSymbolLicense.objects.create(
+                    user=order.user,
+                    symbol_id=item.symbol_id,
+                    order=order,
+                    status=LicenseStatus.ACTIVE,
+                    start_at=start_at,
+                    end_at=end_at,
+                )
+                licenses_created += 1
 
-            PayUserSymbolLicense.objects.create(
+            # Auto-create subscription entry (inactive by default)
+            self._ensure_subscription_for_license(
                 user=order.user,
                 symbol_id=item.symbol_id,
                 order=order,
-                status=LicenseStatus.ACTIVE,
-                start_at=start_at,
-                end_at=end_at,
+                item=item,
             )
-            licenses_created += 1
 
         return licenses_created
+
+    def _ensure_subscription_for_license(
+        self,
+        user: User,
+        symbol_id: int,
+        order: PaySymbolOrder,
+        item: PaySymbolOrderItem,
+    ) -> None:
+        """Create or update subscription entry for license (inactive by default)."""
+        from apps.setting.models import SymbolAutoRenewSubscription, AutoRenewStatus
+
+        # Determine cycle days and price from the order item
+        cycle_days = item.license_days or 30  # Default to 30 if lifetime
+        price = item.price
+
+        # Check if subscription already exists
+        subscription = SymbolAutoRenewSubscription.objects.filter(
+            user=user,
+            symbol_id=symbol_id,
+        ).first()
+
+        if subscription:
+            # Update existing subscription with latest order info
+            subscription.cycle_days = cycle_days
+            subscription.price = price
+            subscription.payment_method = order.payment_method
+            subscription.last_order = order
+            subscription.metadata = {
+                **(subscription.metadata or {}),
+                "last_purchase_order_id": str(order.order_id),
+                "last_purchase_price": str(price),
+                "last_purchase_days": cycle_days,
+            }
+            subscription.save(update_fields=["cycle_days", "price", "payment_method", "last_order", "metadata"])
+        else:
+            # Create new subscription (inactive by default)
+            SymbolAutoRenewSubscription.objects.create(
+                user=user,
+                symbol_id=symbol_id,
+                status=AutoRenewStatus.PAUSED,  # Inactive by default
+                cycle_days=cycle_days,
+                price=price,
+                payment_method=order.payment_method,
+                last_order=order,
+                metadata={
+                    "created_from_order_id": str(order.order_id),
+                    "initial_price": str(price),
+                    "initial_days": cycle_days,
+                },
+            )
 
     def check_symbol_access(self, user: User, symbol_id: int) -> Dict[str, object]:
         license_obj = PayUserSymbolLicense.objects.filter(
@@ -454,7 +511,7 @@ class SymbolPurchaseService:
         now = timezone.now()
         if license_obj.end_at and license_obj.end_at <= now:
             license_obj.status = LicenseStatus.EXPIRED
-            license_obj.save(update_fields=["status", "updated_at"])
+            license_obj.save(update_fields=["status"])
             return {
                 "has_access": False,
                 "reason": "License expired",
@@ -512,6 +569,17 @@ class SymbolPurchaseService:
                 key = (item.order_id, item.symbol_id)
                 order_items_map[key] = item
 
+        # Lấy subscription info
+        from apps.setting.models import SymbolAutoRenewSubscription
+        subscription_map = {}
+        if symbol_ids:
+            subscriptions = SymbolAutoRenewSubscription.objects.filter(
+                user=user,
+                symbol_id__in=symbol_ids
+            )
+            for sub in subscriptions:
+                subscription_map[sub.symbol_id] = sub
+
         results: List[Dict[str, object]] = []
         now = timezone.now()
         for license_obj in licenses_list:
@@ -533,6 +601,19 @@ class SymbolPurchaseService:
                     license_days = order_item.license_days
                     auto_renew = order_item.auto_renew
 
+            # Get subscription info
+            subscription = subscription_map.get(license_obj.symbol_id)
+            subscription_info = None
+            if subscription:
+                subscription_info = {
+                    "subscription_id": str(subscription.subscription_id),
+                    "status": subscription.status,
+                    "is_active": subscription.status == "active",
+                    "price": float(subscription.price),
+                    "cycle_days": subscription.cycle_days,
+                    "next_billing_at": subscription.next_billing_at.isoformat() if subscription.next_billing_at else None,
+                }
+
             results.append(
                 {
                     "license_id": str(license_obj.license_id),
@@ -551,6 +632,8 @@ class SymbolPurchaseService:
                     "auto_renew": auto_renew,
                     "payment_method": license_obj.order.payment_method if license_obj.order else None,
                     "order_total_amount": float(license_obj.order.total_amount) if license_obj.order else None,
+                    # Subscription info
+                    "subscription": subscription_info,
                 }
             )
 
