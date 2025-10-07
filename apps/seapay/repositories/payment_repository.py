@@ -89,7 +89,7 @@ class PaymentRepository:
     def get_payment_intent_by_id(intent_id: str, user: User) -> Optional[PayPaymentIntent]:
         """Tìm payment intent theo ID và user"""
         try:
-            return PayPaymentIntent.objects.get(id=intent_id, user=user)
+            return PayPaymentIntent.objects.get(intent_id=intent_id, user=user)
         except PayPaymentIntent.DoesNotExist:
             return None
     

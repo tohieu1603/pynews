@@ -62,7 +62,7 @@ def create_payment_intent(request: HttpRequest, data: CreatePaymentIntentRequest
     )
     qr_code_url = payment_service.generate_qr_code_url(intent.order_code, intent.amount)
     return CreatePaymentIntentResponse(
-        intent_id=str(intent.id),
+        intent_id=str(intent.intent_id),
         order_code=intent.order_code,
         qr_code_url=qr_code_url,
         transfer_content=intent.order_code,
@@ -127,7 +127,7 @@ def get_payment_intent(request: HttpRequest, intent_id: str):
     user = request.auth
     intent = payment_service.get_payment_intent(intent_id, user)
     return PaymentIntentDetailResponse(
-        intent_id=str(intent.id),
+        intent_id=str(intent.intent_id),
         order_code=intent.order_code,
         amount=float(intent.amount),
         status=intent.status,
@@ -314,10 +314,16 @@ def create_symbol_order_endpoint(request: HttpRequest, data: CreateSymbolOrderRe
         order = result
         payment_intent = getattr(order, "payment_intent", None)
         message = "Order processed successfully."
+        insufficient_balance = False
+        wallet_balance = None
+        shortage = None
     else:
         order = result.get("order")
         payment_intent = result.get("payment_intent")
-        message = "Order created successfully. Complete payment via SePay."
+        insufficient_balance = result.get("insufficient_balance", False)
+        wallet_balance = result.get("wallet_balance")
+        shortage = result.get("shortage")
+        message = result.get("message", "Order created successfully. Complete payment via SePay.")
 
     items_qs = list(order.items.all())
     symbol_ids = {item.symbol_id for item in items_qs if item.symbol_id}
@@ -359,6 +365,9 @@ def create_symbol_order_endpoint(request: HttpRequest, data: CreateSymbolOrderRe
         payment_intent_id=payment_intent_id,
         qr_code_url=qr_code_url,
         deep_link=deep_link,
+        insufficient_balance=insufficient_balance,
+        wallet_balance=wallet_balance,
+        shortage=shortage,
     )
 
 
@@ -395,7 +404,7 @@ def get_order_history(
     return PaginatedSymbolOrderHistory(**orders_data)
 
 
-@router.post("/symbol/order/{order_id}/pay-wallet", response=ProcessWalletPaymentResponse, auth=JWTAuth())
+@router.post("/symbol/orders/{order_id}/pay-wallet", response=ProcessWalletPaymentResponse, auth=JWTAuth())
 def process_wallet_payment(request: HttpRequest, order_id: str):
     try:
         result = symbol_purchase_service.process_wallet_payment(order_id, request.auth)
@@ -404,7 +413,7 @@ def process_wallet_payment(request: HttpRequest, order_id: str):
         raise HttpError(404, str(exc))
 
 
-@router.post("/symbol/order/{order_id}/pay-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
+@router.post("/symbol/orders/{order_id}/pay-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
 def create_sepay_payment(request: HttpRequest, order_id: str):
     try:
         result = symbol_purchase_service.create_sepay_payment_intent(order_id, request.auth)
@@ -415,7 +424,7 @@ def create_sepay_payment(request: HttpRequest, order_id: str):
         raise HttpError(500, f"Failed to create payment intent: {exc}")
 
 
-@router.post("/symbol/order/{order_id}/topup-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
+@router.post("/symbol/orders/{order_id}/topup-sepay", response=CreateSepayPaymentResponse, auth=JWTAuth())
 def create_sepay_topup_for_order(request: HttpRequest, order_id: str):
     try:
         result = symbol_purchase_service.create_sepay_topup_for_insufficient_order(order_id, request.auth)

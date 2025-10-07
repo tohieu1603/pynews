@@ -223,6 +223,10 @@ class CreateSymbolOrderResponse(Schema):
     payment_intent_id: Optional[str] = None
     qr_code_url: Optional[str] = None
     deep_link: Optional[str] = None
+    # Fields cho trường hợp thiếu tiền
+    insufficient_balance: Optional[bool] = False
+    wallet_balance: Optional[Decimal] = None
+    shortage: Optional[Decimal] = None
 
 
 class ProcessWalletPaymentResponse(Schema):
@@ -247,16 +251,21 @@ class CreateSepayPaymentResponse(Schema):
 
 class SymbolAccessCheckResponse(Schema):
     has_access: bool
-    license_id: Optional[str]
-    start_at: Optional[str]
-    end_at: Optional[str]
-    is_lifetime: bool
-    expires_soon: bool
+    license_id: Optional[str] = None
+    symbol_id: Optional[int] = None
+    symbol_name: Optional[str] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    is_lifetime: Optional[bool] = False
+    expires_soon: Optional[bool] = False
+    reason: Optional[str] = None
+    expired_at: Optional[str] = None
 
 
 class UserSymbolLicenseResponse(Schema):
     license_id: str
     symbol_id: int
+    symbol_name: Optional[str] = None
     status: str
     start_at: str
     end_at: Optional[str]
@@ -264,6 +273,12 @@ class UserSymbolLicenseResponse(Schema):
     is_active: bool
     order_id: Optional[str]
     created_at: str
+    # Thông tin từ order
+    purchase_price: Optional[float] = None
+    license_days: Optional[int] = None
+    auto_renew: Optional[bool] = False
+    payment_method: Optional[str] = None
+    order_total_amount: Optional[float] = None
 
 
 class SymbolOrderHistoryResponse(Schema):

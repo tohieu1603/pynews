@@ -125,10 +125,16 @@ class SymbolPurchaseService:
             if wallet.balance >= total_amount:
                 return self._process_immediate_wallet_payment(order, wallet)
 
+            # Không đủ tiền - trả về đơn pending để user chọn thanh toán bằng SePay
             shortage = total_amount - wallet.balance
-            raise ValueError(
-                f"Insufficient wallet balance. You need {shortage} more VND to complete this order."
-            )
+            return {
+                "order": order,
+                "insufficient_balance": True,
+                "wallet_balance": wallet.balance,
+                "total_amount": total_amount,
+                "shortage": shortage,
+                "message": f"Số dư ví không đủ. Thiếu {shortage:,.0f} VND. Vui lòng chọn thanh toán bằng SePay."
+            }
 
         payment_intent = self._create_sepay_payment_intent_for_order(order)
         return {"order": order, "payment_intent": payment_intent}
@@ -286,8 +292,11 @@ class SymbolPurchaseService:
 
         if order.status != OrderStatus.PENDING_PAYMENT:
             raise ValueError(f"Order status is {order.status}, cannot create payment intent")
-        if order.payment_method != PaymentMethod.SEPAY_TRANSFER:
-            raise ValueError("Order payment method is not sepay_transfer")
+
+        # Cho phép tạo payment intent cho cả wallet và sepay_transfer orders
+        # Vì khi wallet thiếu tiền, user có thể chọn thanh toán bằng SePay
+        if order.payment_method not in [PaymentMethod.WALLET, PaymentMethod.SEPAY_TRANSFER]:
+            raise ValueError(f"Cannot create SePay payment intent for payment method: {order.payment_method}")
 
         intent = self.payment_service.create_payment_intent(
             user=user,
@@ -456,9 +465,19 @@ class SymbolPurchaseService:
         if license_obj.end_at:
             expires_soon = (license_obj.end_at - now).days <= 7
 
+        # Lấy tên symbol
+        symbol_name = None
+        try:
+            symbol = Symbol.objects.get(id=symbol_id)
+            symbol_name = symbol.name
+        except Symbol.DoesNotExist:
+            pass
+
         return {
             "has_access": True,
             "license_id": str(license_obj.license_id),
+            "symbol_id": symbol_id,
+            "symbol_name": symbol_name,
             "start_at": license_obj.start_at.isoformat(),
             "end_at": license_obj.end_at.isoformat() if license_obj.end_at else None,
             "is_lifetime": license_obj.end_at is None,
@@ -472,20 +491,53 @@ class SymbolPurchaseService:
             limit = 20
 
         offset = (page - 1) * limit
-        qs = PayUserSymbolLicense.objects.filter(user=user).order_by("-created_at")
+        qs = PayUserSymbolLicense.objects.filter(user=user).select_related('order').order_by("-created_at")
         total = qs.count()
+
+        # Lấy tất cả symbol_ids để query tên 1 lần
+        licenses_list = list(qs[offset : offset + limit])
+        symbol_ids = {license_obj.symbol_id for license_obj in licenses_list if license_obj.symbol_id}
+
+        symbol_names = {}
+        if symbol_ids:
+            symbol_names = {symbol.id: symbol.name for symbol in Symbol.objects.filter(id__in=symbol_ids)}
+
+        # Lấy thông tin order items để lấy giá
+        order_ids = {license_obj.order_id for license_obj in licenses_list if license_obj.order_id}
+        order_items_map = {}
+        if order_ids:
+            from ..models import PaySymbolOrderItem
+            order_items = PaySymbolOrderItem.objects.filter(order_id__in=order_ids)
+            for item in order_items:
+                key = (item.order_id, item.symbol_id)
+                order_items_map[key] = item
 
         results: List[Dict[str, object]] = []
         now = timezone.now()
-        for license_obj in qs[offset : offset + limit]:
+        for license_obj in licenses_list:
             is_active = (
                 license_obj.status == LicenseStatus.ACTIVE
                 and (license_obj.end_at is None or license_obj.end_at > now)
             )
+
+            # Lấy thông tin từ order item
+            order_item = None
+            purchase_price = None
+            license_days = None
+            auto_renew = False
+
+            if license_obj.order_id and license_obj.symbol_id:
+                order_item = order_items_map.get((license_obj.order_id, license_obj.symbol_id))
+                if order_item:
+                    purchase_price = float(order_item.price)
+                    license_days = order_item.license_days
+                    auto_renew = order_item.auto_renew
+
             results.append(
                 {
                     "license_id": str(license_obj.license_id),
                     "symbol_id": license_obj.symbol_id,
+                    "symbol_name": symbol_names.get(license_obj.symbol_id),
                     "status": license_obj.status,
                     "start_at": license_obj.start_at.isoformat(),
                     "end_at": license_obj.end_at.isoformat() if license_obj.end_at else None,
@@ -493,6 +545,12 @@ class SymbolPurchaseService:
                     "is_active": is_active,
                     "order_id": str(license_obj.order_id) if license_obj.order_id else None,
                     "created_at": license_obj.created_at.isoformat(),
+                    # Thông tin từ order
+                    "purchase_price": purchase_price,
+                    "license_days": license_days,
+                    "auto_renew": auto_renew,
+                    "payment_method": license_obj.order.payment_method if license_obj.order else None,
+                    "order_total_amount": float(license_obj.order.total_amount) if license_obj.order else None,
                 }
             )
 
